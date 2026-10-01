@@ -260,11 +260,33 @@ agent-mail reply <msg-id> [-m body] [--stdin]
 agent-mail daemon                  # run the mail daemon (foreground)
 agent-mail daemon install          # launchd / systemd service
 agent-mail mcp                     # serve MCP over stdio (for agents)
+agent-mail tui                     # human mail client (default when TTY)
 agent-mail debug dump <frame...>   # decode raw frames
 ```
 
 Everything is also available via MCP, which is the primary interface for
-agents; the CLI is for humans and for scripting.
+agents; the CLI and TUI are for humans and for scripting.
+
+## TUI
+
+`agent-mail tui` (or `agent-mail` with no subcommand when attached to a
+TTY) launches the human mail client:
+
+- **Three-pane layout**: thread list → conversation view → compose — in the
+  spirit of mutt/aerc, keyboard-driven, mouse optional.
+- **Inbox**: unread markers, audience filter (`all` / `human` / from agents),
+  per-peer grouping, live refresh as the daemon delivers.
+- **Reading**: full thread view with my-key vs. peer color coding, raw frame
+  inspection (`v` key — dumps the decoded envelope).
+- **Composing**: inline editor with subject-ish first line, `--human`/
+  `--agent` audience toggle, tab-completion of allowlisted peer names.
+- **Trust management**: allowlist editor (add/remove peers, paste a NodeId,
+  see pending inbound attempts that were rejected).
+- **Status bar**: own NodeId (for sharing), connection state per peer
+  (direct/relay/offline), outbox backlog count.
+
+Crates: `ratatui` + `crossterm` + `tokio`, talking to the same daemon/store
+as the CLI and MCP server.
 
 ## MCP server
 
@@ -317,11 +339,12 @@ src/
   daemon.rs      # Endpoint + Router, inbox writer, outbox retry loop
   store.rs       # rusqlite schema: inbox, outbox, sent, threads
   mcp.rs         # rmcp stdio server over store
-  human.rs       # human-audience inbox rendering
+  human.rs       # audience filtering; TUI data helpers
+  tui.rs         # ratatui client: panes, compose, allowlist editor
 ```
 
 Key dependencies: `iroh`, `clap`, `serde`/`serde_json`, `toml`, `rusqlite`,
-`rmcp`, `ulid`, `tokio`, `tracing`.
+`rmcp`, `ulid`, `tokio`, `tracing`, `ratatui`, `crossterm`.
 
 ### Milestones
 
@@ -333,17 +356,25 @@ Key dependencies: `iroh`, `clap`, `serde`/`serde_json`, `toml`, `rusqlite`,
    retry loop, full `send`/`inbox`/`read`/`reply` CLI.
 4. **M4 — MCP + skills**: `agent-mail mcp`, skill docs, a two-agent
    conversation over MCP in pi.
-5. **M5 — human mode**: audience filtering, human inbox view, reply path.
+5. **M5 — TUI + human mode**: ratatui client, audience filtering, human
+   inbox, compose/reply, allowlist editor, per-peer connection status.
 6. **M6 (later) — extensions**: `mailbox` capability, attachments via
    `iroh-blobs`, multi-device identity.
 
 ---
 
+## Decisions (locked)
+
+1. **Language: Rust** — IROH is Rust-first; we use the `iroh` crate directly
+   (endpoint, protocol Router, discovery, relays).
+2. **Offline delivery: outbox-retry for v1** — no mailbox servers. Messages
+   to offline peers persist in the outbox and retry with backoff until
+   acked. The `mailbox` capability stays reserved as a later extension.
+3. **Human surface: full TUI** — the CLI ships with a full-featured
+   terminal UI so humans can comfortably read and reply to mail.
+
 ## Open questions
 
-1. **Language**: Rust (recommended — native IROH) vs. Python via
-   [`iroh-ffi`](https://github.com/n0-computer/iroh-ffi) (slower, bindings
-   lag the Rust API). Decision needed before M2.
-2. **Offline delivery**: is outbox-retry enough for v1, or is the `mailbox`
-   capability a must-have early?
-3. **Human surface**: CLI-only inbox/reply for humans, or a minimal TUI?
+None blocking. TBD during implementation: exact TUI widget set (see M5),
+relay default (n0 public relays vs. self-hosted), and service install
+targets (launchd + systemd).
