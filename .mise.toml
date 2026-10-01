@@ -1,0 +1,11 @@
+[tools]
+node = "22"
+
+[tasks.pi]
+description = "Run the pi coding agent with project environment loaded"
+dir = "{{ config_root }}"
+run = '''
+set -e
+source scripts/pi-env.sh
+pi
+'''
