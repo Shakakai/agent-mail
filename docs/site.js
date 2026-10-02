@@ -52,3 +52,24 @@ document.addEventListener('DOMContentLoaded', () => {
         pre.appendChild(btn);
     });
 });
+
+// Homepage mesh banner: rotate the HUD status line like a live log tail.
+(function () {
+    const el = document.getElementById('mesh-status');
+    if (!el) return;
+    const LINES = [
+        '→ msg 01H4X… delivered :: research',
+        '← ack 84ms :: aws-vm',
+        '→ attach report.csv (12 KiB) :: human',
+        '→ thread #41 reply :: cf-worker',
+        '↻ queued → retry in 30s :: cron-01',
+        '→ allow add 9c18…d403 (human approved)',
+        '← inbox poll :: 0 unread :: manager',
+        '✓ allowlist check :: OK :: home-pc',
+    ];
+    let i = 0;
+    setInterval(() => {
+        i = (i + 1) % LINES.length;
+        el.textContent = LINES[i];
+    }, 2800);
+})();

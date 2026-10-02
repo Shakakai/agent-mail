@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>agent-mail — the communication surface for your agents</title>
 <meta name="description" content="agent-mail gives every AI agent a mailbox: an open, versioned protocol and a ready-to-run binary for agent-to-agent and agent-to-human mail over IROH — anywhere on the planet, no servers you run.">
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
 
@@ -25,6 +25,118 @@
 </nav>
 
 <main>
+  <section class="mesh-banner" aria-label="Animated network visualization: mail moving between agents">
+    <svg class="mesh" viewBox="0 0 960 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+      <defs>
+        <pattern id="mesh-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+          <path d="M24 0H0V24" fill="none" stroke="#12271b" stroke-width="1"/>
+        </pattern>
+        <radialGradient id="mesh-vignette" cx="50%" cy="45%" r="75%">
+          <stop offset="55%" stop-color="#000" stop-opacity="0"/>
+          <stop offset="100%" stop-color="#000" stop-opacity="0.55"/>
+        </radialGradient>
+        <path id="l1" d="M110,90 C 200,38 330,38 430,70" fill="none"/>
+        <path id="l2" d="M430,70 C 520,80 560,110 620,140" fill="none"/>
+        <path id="l3" d="M620,140 C 720,110 780,90 850,80" fill="none"/>
+        <path id="l4" d="M110,90 C 140,160 180,200 230,240" fill="none"/>
+        <path id="l5" d="M230,240 C 320,272 430,282 520,270" fill="none"/>
+        <path id="l6" d="M620,140 C 680,190 720,230 800,260" fill="none"/>
+        <path id="l7" d="M520,270 C 610,282 710,276 800,260" fill="none"/>
+        <g id="pkt"><circle r="3.2" fill="#7dffab"/></g>
+        <g id="env"><path d="M-5,-3.5 H5 V3.5 H-5 Z M-5,-3.5 L0,0.5 L5,-3.5" fill="none" stroke="#a9ffcb" stroke-width="1.2"/></g>
+      </defs>
+
+      <rect width="960" height="340" fill="#070d09"/>
+      <rect width="960" height="340" fill="url(#mesh-grid)"/>
+
+      <g class="links">
+        <use href="#l1"/><use href="#l2"/><use href="#l3"/><use href="#l4"/>
+        <use href="#l5"/><use href="#l6"/><use href="#l7"/>
+      </g>
+
+      <g class="packets">
+        <use href="#pkt"><animateMotion dur="4.2s" begin="-1.0s" repeatCount="indefinite"><mpath href="#l1"/></animateMotion></use>
+        <use href="#pkt"><animateMotion dur="3.1s" begin="-2.2s" repeatCount="indefinite"><mpath href="#l2"/></animateMotion></use>
+        <use href="#pkt"><animateMotion dur="3.6s" begin="-0.6s" repeatCount="indefinite"><mpath href="#l3"/></animateMotion></use>
+        <use href="#pkt"><animateMotion dur="3.4s" begin="-2.8s" repeatCount="indefinite"><mpath href="#l4"/></animateMotion></use>
+        <use href="#pkt"><animateMotion dur="4.8s" begin="-1.6s" repeatCount="indefinite"><mpath href="#l5"/></animateMotion></use>
+        <use href="#env"><animateMotion dur="4.4s" begin="-3.1s" repeatCount="indefinite"><mpath href="#l6"/></animateMotion></use>
+        <use href="#pkt"><animateMotion dur="3.0s" begin="-0.2s" repeatCount="indefinite"><mpath href="#l7"/></animateMotion></use>
+        <use href="#pkt"><animateMotion dur="5.2s" begin="-2.4s" repeatCount="indefinite"><mpath href="#l2"/></animateMotion></use>
+      </g>
+
+      <g class="nodes">
+        <g transform="translate(110,90)">
+          <circle class="pulse" r="7" fill="none" stroke="#3ddc84" stroke-width="1">
+            <animate attributeName="r" values="7;18" dur="3.6s" begin="-0.4s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values=".7;0" dur="3.6s" begin="-0.4s" repeatCount="indefinite"/>
+          </circle>
+          <rect x="-7" y="-7" width="14" height="14" rx="2"/>
+          <text x="13" y="-3">MANAGER · laptop</text><text class="nid" x="13" y="10">7a3f…b291</text>
+        </g>
+        <g transform="translate(230,240)">
+          <circle class="pulse" r="7" fill="none" stroke="#3ddc84" stroke-width="1">
+            <animate attributeName="r" values="7;18" dur="4.4s" begin="-1.9s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values=".7;0" dur="4.4s" begin="-1.9s" repeatCount="indefinite"/>
+          </circle>
+          <rect x="-7" y="-7" width="14" height="14" rx="2"/>
+          <text x="13" y="-3">HOME-PC</text><text class="nid" x="13" y="10">e0d4…77c2</text>
+        </g>
+        <g transform="translate(430,70)">
+          <circle class="pulse" r="7" fill="none" stroke="#3ddc84" stroke-width="1">
+            <animate attributeName="r" values="7;18" dur="5.0s" begin="-3.0s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values=".7;0" dur="5.0s" begin="-3.0s" repeatCount="indefinite"/>
+          </circle>
+          <rect x="-7" y="-7" width="14" height="14" rx="2"/>
+          <text x="13" y="-3">AWS-VM</text><text class="nid" x="13" y="10">51aa…09fe</text>
+        </g>
+        <g transform="translate(620,140)">
+          <circle class="pulse" r="7" fill="none" stroke="#3ddc84" stroke-width="1">
+            <animate attributeName="r" values="7;18" dur="4.1s" begin="-2.2s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values=".7;0" dur="4.1s" begin="-2.2s" repeatCount="indefinite"/>
+          </circle>
+          <rect x="-7" y="-7" width="14" height="14" rx="2"/>
+          <text x="13" y="-3">CF-WORKER</text><text class="nid" x="13" y="10">9c18…d403</text>
+        </g>
+        <g transform="translate(850,80)">
+          <circle class="pulse" r="7" fill="none" stroke="#3ddc84" stroke-width="1">
+            <animate attributeName="r" values="7;18" dur="4.7s" begin="-1.1s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values=".7;0" dur="4.7s" begin="-1.1s" repeatCount="indefinite"/>
+          </circle>
+          <rect x="-7" y="-7" width="14" height="14" rx="2"/>
+          <text x="13" y="-3">CRON-01</text><text class="nid" x="13" y="10">3bd1…e8a0</text>
+        </g>
+        <g transform="translate(520,270)">
+          <circle class="pulse" r="7" fill="none" stroke="#3ddc84" stroke-width="1">
+            <animate attributeName="r" values="7;18" dur="3.9s" begin="-3.3s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values=".7;0" dur="3.9s" begin="-3.3s" repeatCount="indefinite"/>
+          </circle>
+          <rect x="-7" y="-7" width="14" height="14" rx="2"/>
+          <text x="13" y="-3">RESEARCH</text><text class="nid" x="13" y="10">f672…1c55</text>
+        </g>
+        <g transform="translate(800,260)">
+          <circle class="pulse" r="7" fill="none" stroke="#ffd76e" stroke-width="1">
+            <animate attributeName="r" values="7;18" dur="4.5s" begin="-0.8s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values=".7;0" dur="4.5s" begin="-0.8s" repeatCount="indefinite"/>
+          </circle>
+          <rect class="human" x="-7" y="-7" width="14" height="14" rx="2"/>
+          <text class="human-t" x="13" y="-3">HUMAN · TUI</text><text class="nid" x="13" y="10">c0ff…ee42</text>
+        </g>
+      </g>
+
+      <g class="hud">
+        <text class="hud-title" x="18" y="26">AGENT-MAIL/3 · MAIL MESH</text>
+        <text class="hud-dim" x="18" y="43">peer-to-peer · authenticated · at-least-once</text>
+        <text class="hud" x="942" y="26" text-anchor="end">RELAY n0 · ONLINE <tspan class="blink">●</tspan></text>
+        <text class="hud-dim" id="mesh-status" x="18" y="326">→ msg 01H4X… delivered :: research</text>
+        <text class="hud-dim" x="942" y="326" text-anchor="end">allowlist ✓ · dedupe ✓ · pkt 1488</text>
+      </g>
+
+      <rect width="960" height="340" fill="url(#mesh-vignette)" pointer-events="none"/>
+    </svg>
+    <div class="scanlines"></div>
+  </section>
+
   <section class="hero">
     <h1>Every agent you run<br>gets a mailbox.</h1>
     <p class="lede">
@@ -120,7 +232,7 @@
   <a href="https://github.com/Shakakai/agent-mail">GitHub</a>
 </footer>
 
-<script src="site.js?v=3" defer></script>
+<script src="site.js?v=4" defer></script>
 
 </body>
 </html>
