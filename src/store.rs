@@ -276,6 +276,18 @@ impl Store {
     }
 
     /// Conversation overview: one row per thread, most recent activity first.
+    /// Highest SQLite rowid among inbound messages; drives MCP
+    /// subscription notifications (a new inbound message means a new rowid).
+    pub fn max_inbound_rowid(&self) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        let max: Option<i64> = conn.query_row(
+            "SELECT MAX(rowid) FROM messages WHERE direction='in'",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(max)
+    }
+
     pub fn list_threads(&self) -> Result<Vec<ThreadSummary>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

@@ -6,18 +6,33 @@ use anyhow::Result;
 use iroh::SecretKey;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData;
+use rmcp::model::{
+    ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResponse,
+    ReadResourceResult, Resource, ResourceContents, ResourceUpdatedNotification,
+    ResourceUpdatedNotificationParam, ResourcesCapability, ServerCapabilities, ServerConfig,
+    ServerNotification, SubscribeRequestParams, SubscriptionFilter, UnsubscribeRequestParams,
+};
+use rmcp::service::{RequestContext, SubscriptionContext, SubscriptionSink};
 use rmcp::tool;
+use rmcp::tool_handler;
 use rmcp::tool_router;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
+use rmcp::{Peer, RoleServer, ServerHandler};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::allowlist::{AllowList, PeerEntry};
 use crate::config::{Config, Paths};
 use crate::identity;
 use crate::ops;
 use crate::proto::Audience;
+use crate::store::Store;
+
+/// Resource URI clients subscribe to for new-mail notifications.
+pub const INBOX_URI: &str = "agent-mail://inbox";
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SendParams {
@@ -69,12 +84,24 @@ pub struct AllowAddParams {
     pub human: Option<bool>,
 }
 
+/// One subscriber to `agent-mail://inbox`: either a legacy
+/// `resources/subscribe` client (tracked by its peer) or a 2026-07-28
+/// `subscriptions/listen` stream (tracked by its filter-enforcing sink).
+#[derive(Clone)]
+enum Subscriber {
+    Legacy(Peer<RoleServer>),
+    Sink(SubscriptionSink),
+}
+
+type Subscriptions = Arc<Mutex<Vec<(String, Subscriber)>>>;
+
 #[derive(Clone)]
 pub struct MailMcp {
     paths: Paths,
     config: Config,
     secret_key: SecretKey,
     me: String,
+    subs: Subscriptions,
 }
 
 impl MailMcp {
@@ -86,6 +113,7 @@ impl MailMcp {
             config,
             secret_key,
             me,
+            subs: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -124,7 +152,7 @@ impl MailMcp {
     }
 }
 
-#[tool_router(server_handler)]
+#[tool_router]
 impl MailMcp {
     #[tool(description = "Get this agent's agent-mail identity (NodeId) and where to find the allowlist. Share the NodeId with peers so they can allow this agent.")]
     fn get_identity(&self) -> String {
@@ -238,8 +266,194 @@ impl MailMcp {
     }
 }
 
+#[tool_handler]
+impl ServerHandler for MailMcp {
+    fn get_info(&self) -> ServerConfig {
+        let mut caps = ServerCapabilities::builder().enable_tools().build();
+        // Advertise that clients may subscribe to resources (pre-2026-07-28
+        // clients use `resources/subscribe`; newer ones use
+        // `subscriptions/listen`). Both paths are implemented below.
+        let mut resources = ResourcesCapability::default();
+        resources.subscribe = Some(true);
+        caps.resources = Some(resources);
+        ServerConfig::new(caps)
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> std::result::Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult {
+            result_type: None,
+            meta: None,
+            next_cursor: None,
+            ttl_ms: None,
+            cache_scope: None,
+            resources: vec![Resource::new(INBOX_URI, "inbox")
+                .with_description(
+                    "Recent inbound agent-mail messages as JSON. Subscribe for \
+                     notifications/resources/updated when new mail arrives.",
+                )
+                .with_mime_type("application/json")],
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> std::result::Result<ReadResourceResponse, ErrorData> {
+        if request.uri != INBOX_URI {
+            return Err(Self::bad_request(format!(
+                "unknown resource `{}`; only `{INBOX_URI}` is available",
+                request.uri
+            )));
+        }
+        let messages = ops::list_inbox(&self.paths, None, false, false)
+            .map_err(|e| Self::internal(format!("{e:#}")))?;
+        let text = serde_json::to_string_pretty(&messages)
+            .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
+        let content = ResourceContents::text(text, INBOX_URI).with_mime_type("application/json");
+        Ok(ReadResourceResult::new(vec![content]).into())
+    }
+
+    /// Legacy (pre-2026-07-28) resource subscription. The watcher task sends
+    /// `notifications/resources/updated` to these peers on new inbound mail.
+    #[allow(deprecated)]
+    async fn subscribe(
+        &self,
+        request: SubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> std::result::Result<(), ErrorData> {
+        if request.uri != INBOX_URI {
+            return Err(Self::bad_request(format!(
+                "cannot subscribe to `{}`; only `{INBOX_URI}` is subscribable",
+                request.uri
+            )));
+        }
+        self.subs
+            .lock()
+            .unwrap()
+            .push((INBOX_URI.to_string(), Subscriber::Legacy(context.peer)));
+        Ok(())
+    }
+
+    #[allow(deprecated)]
+    async fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> std::result::Result<(), ErrorData> {
+        if request.uri != INBOX_URI {
+            return Err(Self::bad_request(format!(
+                "cannot unsubscribe from `{}`; only `{INBOX_URI}` is tracked",
+                request.uri
+            )));
+        }
+        self.subs.lock().unwrap().retain(|(uri, sub)| {
+            !(uri == INBOX_URI && matches!(sub, Subscriber::Legacy(_)))
+        });
+        Ok(())
+    }
+
+    /// 2026-07-28 subscriptions: accept listen streams that opt in to
+    /// `agent-mail://inbox` resource updates.
+    fn accepted_subscription_filter(
+        &self,
+        requested: &SubscriptionFilter,
+    ) -> Option<SubscriptionFilter> {
+        let uris = requested.resource_subscriptions.as_ref()?;
+        if uris.iter().any(|u| u == INBOX_URI) {
+            Some(
+                SubscriptionFilter::builder()
+                    .resource_subscription(INBOX_URI)
+                    .build(),
+            )
+        } else {
+            None
+        }
+    }
+
+    /// Hold the listen stream open until the client cancels it, forwarding
+    /// inbox updates through the sink while alive.
+    async fn listen(&self, context: SubscriptionContext) -> std::result::Result<(), ErrorData> {
+        self.subs.lock().unwrap().push((
+            INBOX_URI.to_string(),
+            Subscriber::Sink(context.sink().clone()),
+        ));
+        context.cancelled().await;
+        let id = context.sink().id().clone();
+        self.subs.lock().unwrap().retain(|(_, sub)| match sub {
+            Subscriber::Sink(sink) => sink.id() != &id,
+            Subscriber::Legacy(_) => true,
+        });
+        Ok(())
+    }
+}
+
+/// Poll the store for new inbound mail and notify every subscriber of
+/// `agent-mail://inbox`. Runs for the lifetime of the MCP server process.
+async fn inbox_watcher(paths: Paths, subs: Subscriptions) {
+    let mut last: i64 = -1;
+    loop {
+        let tick = Store::open(&paths)
+            .and_then(|store| store.max_inbound_rowid())
+            .map(|max| max.unwrap_or(0));
+        match tick {
+            Ok(cur) => {
+                if last >= 0 && cur > last {
+                    notify_inbox_subs(&subs).await;
+                }
+                last = last.max(cur);
+            }
+            Err(e) => tracing::warn!("subscription watcher: {e:#}"),
+        }
+        tokio::time::sleep(Duration::from_millis(800)).await;
+    }
+}
+
+async fn notify_inbox_subs(subs: &Subscriptions) {
+    let targets: Vec<(usize, Subscriber)> = {
+        let guard = subs.lock().unwrap();
+        guard
+            .iter()
+            .enumerate()
+            .filter(|(_, (uri, _))| uri == INBOX_URI)
+            .map(|(i, (_, sub))| (i, sub.clone()))
+            .collect()
+    };
+    let mut dead = Vec::new();
+    for (full_idx, sub) in targets {
+        let notification = || {
+            ServerNotification::ResourceUpdatedNotification(
+                ResourceUpdatedNotification::new(ResourceUpdatedNotificationParam::new(
+                    INBOX_URI,
+                )),
+            )
+        };
+        let ok = match &sub {
+            Subscriber::Legacy(peer) => peer.send_notification(notification()).await.is_ok(),
+            Subscriber::Sink(sink) => sink.send(notification()).await.is_ok(),
+        };
+        if !ok {
+            tracing::debug!("dropping dead inbox subscriber");
+            dead.push(full_idx);
+        }
+    }
+    if !dead.is_empty() {
+        let mut guard = subs.lock().unwrap();
+        for full_idx in dead.into_iter().rev() {
+            if full_idx < guard.len() {
+                guard.remove(full_idx);
+            }
+        }
+    }
+}
+
 pub async fn run(paths: Paths, config: Config) -> Result<()> {
-    let server = MailMcp::new(paths, config)?;
+    let server = MailMcp::new(paths.clone(), config)?;
+    tokio::spawn(inbox_watcher(paths, server.subs.clone()));
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())

@@ -8,13 +8,15 @@ Usage: python3 scripts/mcp_smoke.py /path/to/agent-mail
 """
 
 import json
+import select
 import subprocess
 import sys
 import time
 
 
 class McpClient:
-    def __init__(self, binary: str, config_dir: str, data_dir: str):
+    def __init__(self, binary: str, config_dir: str, data_dir: str,
+                 protocol_version: str = "2025-06-18", modern: bool = False):
         env = {
             "PATH": "/usr/bin:/bin:/usr/local/bin",
             "AGENT_MAIL_CONFIG_DIR": config_dir,
@@ -30,12 +32,27 @@ class McpClient:
             text=True,
         )
         self._id = 0
-        self._request({"jsonrpc": "2.0", "id": self.next_id(), "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18",
-            "capabilities": {},
-            "clientInfo": {"name": "smoke", "version": "0"},
-        }})
-        self._request({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        self.modern = modern
+        self.protocol_version = protocol_version
+        if modern:
+            # 2026-07-28 lifecycle: no initialize; open with `discover` and
+            # carry self-contained _meta on every request (including this one).
+            self.init = self._request({"jsonrpc": "2.0", "id": self.next_id(),
+                                       "method": "server/discover",
+                                       "params": {"_meta": self.meta()}})
+        else:
+            self.init = self._request({"jsonrpc": "2.0", "id": self.next_id(), "method": "initialize", "params": {
+                "protocolVersion": protocol_version,
+                "capabilities": {},
+                "clientInfo": {"name": "smoke", "version": "0"},
+            }})
+            self._request({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def meta(self) -> dict:
+        return {
+            "io.modelcontextprotocol/protocolVersion": self.protocol_version,
+            "io.modelcontextprotocol/clientCapabilities": {"resources": {}, "tools": {}},
+        }
 
     def next_id(self):
         self._id += 1
@@ -65,6 +82,41 @@ class McpClient:
         if result.get("isError"):
             return {"error": content["text"]}
         return json.loads(content["text"])
+
+    def notify(self, method: str, params: dict):
+        self.proc.stdin.write(json.dumps(
+            {"jsonrpc": "2.0", "method": method, "params": params}) + "\n")
+        self.proc.stdin.flush()
+
+    def wait_line(self, timeout: float):
+        fd = self.proc.stdout.fileno()
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            remaining = deadline - time.time()
+            r, _, _ = select.select([fd], [], [], min(remaining, 2.0))
+            if r:
+                line = self.proc.stdout.readline()
+                if line:
+                    return json.loads(line)
+        return None
+
+    def wait_notification(self, method: str, timeout: float = 30.0) -> dict:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            msg = self.wait_line(min(2.0, deadline - time.time()))
+            if msg and msg.get("method") == method:
+                return msg
+        raise AssertionError(f"no notification {method!r} within {timeout}s")
+
+    def wait_response(self, req_id, timeout: float = 10.0) -> dict:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            msg = self.wait_line(min(2.0, deadline - time.time()))
+            if msg and msg.get("id") == req_id:
+                if "error" in msg:
+                    raise RuntimeError(f"rpc error: {msg['error']}")
+                return msg.get("result", {})
+        raise AssertionError(f"no response for request {req_id} within {timeout}s")
 
     def close(self):
         try:
@@ -132,6 +184,72 @@ def main():
         except RuntimeError as e:
             assert "disabled" in str(e), e
         print("allow_add correctly gated by default")
+
+        # --- subscriptions: capabilities + resource surface ---
+        caps = a.init.get("capabilities", {})
+        assert caps.get("resources", {}).get("subscribe") is True, caps
+        print("capabilities advertise resources.subscribe")
+
+        res = a._request({"jsonrpc": "2.0", "id": a.next_id(), "method": "resources/list"})
+        uris = [r["uri"] for r in res["resources"]]
+        assert "agent-mail://inbox" in uris, uris
+        content = a._request({"jsonrpc": "2.0", "id": a.next_id(), "method": "resources/read",
+                              "params": {"uri": "agent-mail://inbox"}})
+        assert "ack over MCP" in content["contents"][0]["text"]
+        print("resources/list + resources/read ok")
+
+        # --- legacy resources/subscribe (pre-2026-07-28 clients) ---
+        a._request({"jsonrpc": "2.0", "id": a.next_id(), "method": "resources/subscribe",
+                    "params": {"uri": "agent-mail://inbox"}})
+        b.call("send_message", {"peer": "agent-a", "body": "legacy sub probe"})
+        note = a.wait_notification("notifications/resources/updated", timeout=90)
+        assert note["params"]["uri"] == "agent-mail://inbox", note
+        print("legacy resources/subscribe: notification received")
+
+        a._request({"jsonrpc": "2.0", "id": a.next_id(), "method": "resources/unsubscribe",
+                    "params": {"uri": "agent-mail://inbox"}})
+
+        # --- 2026-07-28 subscriptions/listen ---
+        a28 = McpClient(binary, f"{base}/a/cfg", f"{base}/a/data",
+                        protocol_version="2026-07-28", modern=True)
+        try:
+            listen_id = a28.next_id()
+            a28.proc.stdin.write(json.dumps({
+                "jsonrpc": "2.0", "id": listen_id, "method": "subscriptions/listen",
+                "params": {
+                    "notifications": {"resourceSubscriptions": ["agent-mail://inbox"]},
+                    "_meta": a28.meta(),
+                },
+            }) + "\n")
+            a28.proc.stdin.flush()
+            ack = a28.wait_notification("notifications/subscriptions/acknowledged", timeout=10)
+            accepted = ack["params"].get("notifications", {})
+            assert accepted.get("resourceSubscriptions") == ["agent-mail://inbox"], ack
+            assert ack["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"] == listen_id
+            print("subscriptions/listen acknowledged:", accepted)
+
+            b.call("send_message", {"peer": "agent-a", "body": "listen sub probe"})
+            note = a28.wait_notification("notifications/resources/updated", timeout=90)
+            assert note["params"]["uri"] == "agent-mail://inbox", note
+            print("subscriptions/listen: notification received")
+
+            # cancel the listen stream: rmcp cancels the in-flight listen and
+            # (per stdio cancellation semantics) drops its response; the
+            # subscription must simply stop producing notifications.
+            a28.proc.stdin.write(json.dumps({
+                "jsonrpc": "2.0", "method": "notifications/cancelled",
+                "params": {"requestId": listen_id, "reason": "test done"},
+            }) + "\n")
+            a28.proc.stdin.flush()
+            time.sleep(1.5)
+            print("subscriptions/listen cancelled")
+
+            # after cancellation no further notifications arrive
+            b.call("send_message", {"peer": "agent-a", "body": "post-cancel probe"})
+            assert a28.wait_line(8.0) is None, "unexpected notification after cancel"
+            print("no notifications after cancel")
+        finally:
+            a28.close()
 
         print("\nALL MCP SMOKE TESTS PASSED")
     finally:

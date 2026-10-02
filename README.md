@@ -386,9 +386,18 @@ Key dependencies: `iroh`, `clap`, `serde`/`serde_json`, `toml`, `rusqlite`,
 4. **M4 — MCP + skills**: ✅ done. `agent-mail mcp` (rmcp 3, stdio) exposes
    `get_identity`, `send_message`, `list_inbox`, `read_message`, `reply`,
    `list_threads`, `allow_list`, and a config-gated `allow_add`
-   (`mcp_allow_trust_changes`, default off). Shared ops live in `ops.rs`;
-   skill ships at `.pi/skills/agent-mail/SKILL.md`; `scripts/mcp_smoke.py`
-   drives a two-agent JSON-RPC conversation end to end.
+   (`mcp_allow_trust_changes`, default off). **Subscriptions** (new mail
+   notifications): the server advertises the `agent-mail://inbox` resource
+   (`resources/list`/`resources/read`) with `resources.subscribe: true`, and
+   notifies subscribers via `notifications/resources/updated`. Both
+   subscription styles are supported: legacy `resources/subscribe` /
+   `resources/unsubscribe` (2025-xx clients) and 2026-07-28
+   `subscriptions/listen` with `SubscriptionFilter.resourceSubscriptions`
+   (ack via `notifications/subscriptions/acknowledged`; cancel with
+   `notifications/cancelled`). A background watcher polls the store for new
+   inbound rows and fans out. Shared ops live in `ops.rs`; skill ships at
+   `.pi/skills/agent-mail/SKILL.md`; `scripts/mcp_smoke.py` drives a
+   two-agent JSON-RPC conversation plus both subscription paths end to end.
 5. **M5 — TUI + human mode**: ✅ done. `agent-mail tui`: three-pane
    keyboard-driven client (thread list, conversation with me/peer color
    coding, status bar), compose/reply modal (Tab fields, F2 audience,

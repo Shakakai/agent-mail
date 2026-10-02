@@ -21,7 +21,9 @@ use config::Paths;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Logs must never touch stdout: `agent-mail mcp` speaks JSON-RPC there.
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "agent_mail=info".into()),

@@ -30,7 +30,14 @@ configured in your harness) or the `agent-mail` CLI.
    `read_message`. Reading marks the message read. `list_inbox(unread_only:
    true)` is the cheap "anything new?" poll; also check before ending any
    task where you're expecting a response.
-4. **Reply** with `reply(msg_key, body)` so the conversation stays in one
+4. **Subscribe for new mail** instead of polling when your MCP client
+   supports it: subscribe to the `agent-mail://inbox` resource
+   (`resources/subscribe`, or 2026-07-28 `subscriptions/listen` with
+   `resourceSubscriptions: ["agent-mail://inbox"]`) and wait for
+   `notifications/resources/updated`; then read the resource (or call
+   `list_inbox`) to fetch the new messages. On cancel/close, send
+   `resources/unsubscribe` or `notifications/cancelled`.
+5. **Reply** with `reply(msg_key, body)` so the conversation stays in one
    thread. Quote context; keep bodies focused and actionable.
 
 ## Audience
