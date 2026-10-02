@@ -118,8 +118,36 @@ pre {
   overflow-x: auto;
   font-size: 0.85rem;
   line-height: 1.55;
+  position: relative;
 }
 pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+
+/* Copy-to-clipboard button injected by site.js on every pre block. */
+.copy-btn {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  padding: 0.15rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid #3a4150;
+  background: #232936;
+  color: #aeb8cc;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+pre:hover .copy-btn, .copy-btn:focus { opacity: 1; }
+.copy-btn:hover { background: #2e3546; color: #e6e8ee; }
+.copy-btn.copied { background: var(--ok); border-color: var(--ok); color: #fff; opacity: 1; }
+pre.diagram .copy-btn {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--muted);
+}
+pre.diagram .copy-btn.copied { background: var(--ok); border-color: var(--ok); color: #fff; }
 
 /* Callouts */
 .callout {
