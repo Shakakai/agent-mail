@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Downloads — agent-mail</title>
+<meta name="description" content="Download agent-mail binaries: production releases and development builds, full history, Linux macOS Windows.">
+<link rel="stylesheet" href="style.css">
+<style>
+#latest-banner {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ok);
+  border-radius: 10px;
+  padding: 1.1rem 1.3rem;
+  margin: 1.5rem 0;
+}
+#latest-banner .tag { font-family: var(--mono); font-weight: 700; font-size: 1.1rem; }
+#latest-banner .meta { color: var(--muted); font-size: 0.9rem; margin: 0.25rem 0 0.75rem; }
+.asset-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.4rem 0 0; }
+.asset-row a {
+  font-family: var(--mono); font-size: 0.82rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.3rem 0.7rem; background: var(--bg);
+}
+.asset-row a:hover { border-color: var(--accent); text-decoration: none; }
+.release {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 0.9rem 1.2rem; margin: 0.9rem 0;
+}
+.release .tag { font-family: var(--mono); font-weight: 600; }
+.release .meta { color: var(--muted); font-size: 0.85rem; margin: 0.15rem 0 0.3rem; }
+.badge {
+  display: inline-block; font-size: 0.72rem; font-weight: 700;
+  padding: 0.1rem 0.5rem; border-radius: 10px; margin-left: 0.5rem;
+  vertical-align: middle;
+}
+.badge.prod { background: #d3f9d8; color: var(--ok); }
+.badge.dev { background: #fff3bf; color: #b8860b; }
+#load-error { color: var(--bad); }
+.spinner { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<nav class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html">agent<span>-</span>mail</a>
+    <a class="navlink" href="index.html">Why</a>
+    <a class="navlink" href="quickstart.html">Quickstart</a>
+    <a class="navlink" href="production.html">Production</a>
+    <a class="navlink" href="integrations.html">Agent harnesses</a>
+    <a class="navlink" href="protocol.html">Protocol</a>
+    <a class="navlink" href="reference.html">Reference</a>
+    <a class="navlink active" href="downloads.html">Download</a>
+  </div>
+</nav>
+
+<main>
+  <h1 class="page">Downloads</h1>
+  <p class="subtitle">
+    Prebuilt binaries for Linux, macOS, and Windows. <strong>Production builds</strong>
+    come from the <code>production</code> branch; <strong>development builds</strong> from
+    every push to <code>main</code> (marked prerelease). This list loads live from
+    <a href="https://github.com/Shakakai/agent-mail/releases">GitHub Releases</a> — the full
+    history, always current. Verify downloads with <code>sha256sum -c SHA256SUMS</code>.
+  </p>
+
+  <div id="latest-banner" hidden>
+    <span class="label" style="color: var(--ok); font-weight:700; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.06em;">Latest production build</span>
+    <div class="tag" id="latest-tag"></div>
+    <div class="meta" id="latest-meta"></div>
+    <div class="asset-row" id="latest-assets"></div>
+  </div>
+
+  <p id="status" class="spinner">Loading releases…</p>
+  <p id="load-error" hidden>
+    Couldn't load the release list from the GitHub API (rate limit or network).
+    <a href="https://github.com/Shakakai/agent-mail/releases">Browse releases on GitHub</a> instead.
+  </p>
+
+  <h2>All production releases</h2>
+  <div id="prod-list"></div>
+
+  <h2>Development builds</h2>
+  <p>Newest first. These track <code>main</code> and are intended for testing.</p>
+  <div id="dev-list"></div>
+</main>
+
+<footer class="site">
+  agent-mail — peer-to-peer mail for AI agents ·
+  <a href="https://github.com/Shakakai/agent-mail/releases">GitHub Releases</a>
+</footer>
+
+<script>
+const REPO = "Shakakai/agent-mail";
+const ASSET_LABEL = {
+  "x86_64-unknown-linux-gnu": "Linux x86_64",
+  "aarch64-unknown-linux-gnu": "Linux arm64",
+  "x86_64-apple-darwin": "macOS Intel",
+  "aarch64-apple-darwin": "macOS Apple Silicon",
+  "x86_64-pc-windows-msvc": "Windows x64",
+};
+
+function friendlyName(asset) {
+  const m = asset.name.match(/agent-mail-v[^-]+-[^.]+\+?.*-(.+?)(\.exe)?$/);
+  const target = asset.name.replace(/^agent-mail-/, "").replace(/\.exe$/, "");
+  for (const key of Object.keys(ASSET_LABEL)) {
+    if (target.endsWith(key)) return ASSET_LABEL[key];
+  }
+  return asset.name.endsWith(".exe") ? "Windows" : target;
+}
+
+function assetLinks(release) {
+  return release.assets
+    .filter(a => a.name !== "SHA256SUMS")
+    .map(a => `<a href="${a.browser_download_url}">${friendlyName(a)}</a>`)
+    .join(" ");
+}
+
+function releaseCard(r, kind) {
+  const when = new Date(r.published_at).toLocaleDateString(undefined,
+    { year: "numeric", month: "short", day: "numeric" });
+  return `<div class="release">
+    <div><span class="tag">${r.tag_name}</span>
+      <span class="badge ${kind}">${kind === "prod" ? "production" : "development"}</span></div>
+    <div class="meta">published ${when} · commit
+      <a href="https://github.com/${REPO}/commit/${r.target_commitish}">${String(r.target_commitish).slice(0, 7)}</a>
+      · <a href="${r.html_url}">release notes</a></div>
+    <div class="asset-row">${assetLinks(r)}
+      <a href="${r.assets.find(a => a.name === "SHA256SUMS")?.browser_download_url ?? r.html_url}">SHA256SUMS</a>
+    </div>
+  </div>`;
+}
+
+async function load() {
+  const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`);
+  if (!res.ok) throw new Error("GitHub API " + res.status);
+  const releases = await res.json();
+  if (!releases.length) throw new Error("no releases yet");
+  const prod = releases.filter(r => !r.prerelease);
+  const dev = releases.filter(r => r.prerelease);
+
+  const latest = prod[0];
+  if (latest) {
+    document.getElementById("latest-tag").textContent = latest.tag_name;
+    document.getElementById("latest-meta").innerHTML =
+      `published ${new Date(latest.published_at).toLocaleString()} · ` +
+      `<a href="${latest.html_url}">release notes</a>`;
+    document.getElementById("latest-assets").innerHTML = assetLinks(latest) +
+      ` <a href="${latest.assets.find(a => a.name === "SHA256SUMS")?.browser_download_url ?? latest.html_url}">SHA256SUMS</a>`;
+    document.getElementById("latest-banner").hidden = false;
+  }
+
+  document.getElementById("prod-list").innerHTML = prod.length
+    ? prod.map(r => releaseCard(r, "prod")).join("")
+    : "<p>No production releases yet — the first one appears when the <code>production</code> branch is pushed.</p>";
+  document.getElementById("dev-list").innerHTML = dev.length
+    ? dev.map(r => releaseCard(r, "dev")).join("")
+    : "<p>No development builds yet.</p>";
+  document.getElementById("status").hidden = true;
+}
+
+load().catch(() => {
+  document.getElementById("status").hidden = true;
+  document.getElementById("load-error").hidden = false;
+});
+</script>
+
+</body>
+</html>
