@@ -31,6 +31,9 @@ impl ProtocolHandler for MailHandler {
             .unwrap_or(false);
         if !allowed {
             warn!(%remote, "rejected connection: node id not in allowlist");
+            if let Ok(store) = Store::open(&self.paths) {
+                let _ = store.record_rejection(&remote.to_string());
+            }
             return Ok(());
         }
 

@@ -35,6 +35,12 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS dedupe_idx ON messages (direction, peer, remote_id);
 CREATE INDEX IF NOT EXISTS inbox_idx ON messages (direction, received_at DESC);
+CREATE TABLE IF NOT EXISTS rejections (
+    node_id   TEXT NOT NULL,
+    last_seen INTEGER NOT NULL,
+    count     INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (node_id)
+);
 ";
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,9 +66,18 @@ pub struct StoredMessage {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct Rejection {
+    pub node_id: String,
+    pub last_seen: u64,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ThreadSummary {
     pub thread_id: String,
     pub peer: String,
+    /// Audience of the most recent message ("agent" or "human").
+    pub audience: String,
     pub message_count: u64,
     pub unread_count: u64,
     pub last_body: String,
@@ -264,7 +279,11 @@ impl Store {
     pub fn list_threads(&self) -> Result<Vec<ThreadSummary>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT thread_id, peer, COUNT(*),
+            "SELECT thread_id, peer,
+                    (SELECT audience FROM messages m2
+                      WHERE m2.thread_id = messages.thread_id
+                      ORDER BY m2.created_at DESC LIMIT 1),
+                    COUNT(*),
                     SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END),
                     (SELECT body FROM messages m2
                       WHERE m2.thread_id = messages.thread_id
@@ -280,13 +299,76 @@ impl Store {
             Ok(ThreadSummary {
                 thread_id: row.get(0)?,
                 peer: row.get(1)?,
-                message_count: row.get::<_, i64>(2)? as u64,
-                unread_count: row.get::<_, i64>(3)? as u64,
-                last_body: row.get(4)?,
-                last_at: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+                audience: row.get(2)?,
+                message_count: row.get::<_, i64>(3)? as u64,
+                unread_count: row.get::<_, i64>(4)? as u64,
+                last_body: row.get(5)?,
+                last_at: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Record a rejected inbound connection attempt (unknown NodeId).
+    pub fn record_rejection(&self, node_id: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO rejections (node_id, last_seen, count) VALUES (?1, ?2, 1)
+             ON CONFLICT(node_id) DO UPDATE SET last_seen = ?2, count = count + 1",
+            params![node_id, now_secs() as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_rejections(&self) -> Result<Vec<Rejection>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT node_id, last_seen, count FROM rejections ORDER BY last_seen DESC LIMIT 100")?;
+        let rows = stmt.query_map(params![], |row| {
+            Ok(Rejection {
+                node_id: row.get(0)?,
+                last_seen: row.get::<_, i64>(1)? as u64,
+                count: row.get::<_, i64>(2)? as u64,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Count of outgoing messages still waiting for delivery.
+    pub fn outbox_backlog(&self) -> u64 {
+        self.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE direction = 'out'
+                 AND status IN ('queued', 'failed') AND attempts < 10",
+                params![],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| n as u64)
+            .unwrap_or(0)
+    }
+
+    /// Messages of one thread, chronological.
+    pub fn thread_messages(&self, thread_id: &str) -> Result<Vec<StoredMessage>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
+                    audience, content_type, body, created_at, received_at, read_at,
+                    status, attempts
+             FROM messages WHERE thread_id = ?1 ORDER BY created_at",
+        )?;
+        let rows = stmt.query_map(params![thread_id], map_stored)?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Mark every inbound message in a thread as read.
+    pub fn mark_thread_read(&self, thread_id: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE messages SET read_at = ?2, status = 'read'
+             WHERE thread_id = ?1 AND direction = 'in' AND read_at IS NULL",
+            params![thread_id, now_secs() as i64],
+        )?;
+        Ok(())
     }
 
     pub fn get(&self, msg_key: &str) -> Result<Option<StoredMessage>> {

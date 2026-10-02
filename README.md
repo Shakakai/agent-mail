@@ -11,12 +11,12 @@ automatically.
 
 ## Status
 
-**M2–M4 implemented and verified end-to-end** (Rust, iroh 1.3): identity,
-allowlist (inbound + outbound gating), `agent-mail/1` protocol
+**All milestones M2–M5 implemented and verified** (Rust, iroh 1.3):
+identity, allowlist (inbound + outbound gating), `agent-mail/1` protocol
 (hello/send/ack/error), SQLite inbox/outbox with at-least-once delivery and
-daemon retry (backoff, capped at 10 attempts), `send`/`inbox`/`read`/`reply`
-CLI, human-audience filtering, `addr`/`send --ticket`, and a stdio MCP server
-with the agent skill (`.pi/skills/agent-mail/`). TUI (M5) is next.
+daemon retry, CLI, stdio MCP server + agent skill, and the ratatui TUI for
+humans. M6 (extensions: mailbox capability, attachments, multi-device)
+remains future work.
 
 Verified against the live n0 network: two agents on one machine exchanging
 mail over QUIC (direct and/or relayed), offline queue delivering when the
@@ -389,8 +389,13 @@ Key dependencies: `iroh`, `clap`, `serde`/`serde_json`, `toml`, `rusqlite`,
    (`mcp_allow_trust_changes`, default off). Shared ops live in `ops.rs`;
    skill ships at `.pi/skills/agent-mail/SKILL.md`; `scripts/mcp_smoke.py`
    drives a two-agent JSON-RPC conversation end to end.
-5. **M5 — TUI + human mode**: ratatui client, audience filtering, human
-   inbox, compose/reply, allowlist editor, per-peer connection status.
+5. **M5 — TUI + human mode**: ✅ done. `agent-mail tui`: three-pane
+   keyboard-driven client (thread list, conversation with me/peer color
+   coding, status bar), compose/reply modal (Tab fields, F2 audience,
+   Ctrl-S send), allowlist editor showing rejected inbound attempts
+   (daemon records them), raw JSON view, audience filter
+   (all/human/agents), 2s live refresh. `scripts/tui_smoke.py` drives the
+   real TUI over a PTY, composes a message, and verifies delivery.
 6. **M6 (later) — extensions**: `mailbox` capability, attachments via
    `iroh-blobs`, multi-device identity.
 

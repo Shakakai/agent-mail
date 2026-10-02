@@ -10,7 +10,7 @@ use crate::client;
 use crate::config::{Config, Paths};
 use crate::proto::Audience;
 use crate::store::Store;
-use crate::{daemon, identity, mcp};
+use crate::{daemon, identity, mcp, tui};
 
 #[derive(Parser)]
 #[command(
@@ -38,6 +38,8 @@ enum Commands {
     Daemon,
     /// Serve MCP over stdio (the agent interface).
     Mcp,
+    /// Human mail client (TUI).
+    Tui,
     /// Send a message to an allowlisted peer.
     Send {
         /// Peer NodeId or allowlist name.
@@ -122,6 +124,7 @@ pub async fn run(paths: Paths) -> Result<()> {
         Commands::Allow { action } => cmd_allow(&paths, action),
         Commands::Daemon => daemon::run(paths, config).await,
         Commands::Mcp => mcp::run(paths, config).await,
+        Commands::Tui => tui::run(paths, config).await,
         Commands::Send {
             peer,
             message,

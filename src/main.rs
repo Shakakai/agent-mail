@@ -14,6 +14,7 @@ mod mcp;
 mod ops;
 mod proto;
 mod store;
+mod tui;
 mod util;
 
 use config::Paths;
