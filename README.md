@@ -105,6 +105,9 @@ holding everything a node needs — secret key, allowlist, config, and mail
 store:
 
 ```sh
+# install the latest production build (platform-detecting, checksum-verified):
+curl -fsSL https://shakakai.github.io/agent-mail/install.sh | bash
+
 agent-mail init --home ./alice        # create a new private key + folder
 agent-mail daemon --home ./alice      # run it (same flag reattaches later)
 agent-mail init --home ./bob && agent-mail daemon --home ./bob   # a second node

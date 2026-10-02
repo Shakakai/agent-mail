@@ -32,11 +32,12 @@
   </p>
 
   <h2>0. Install</h2>
-  <p>Build the single static binary (Rust toolchain required):</p>
-  <pre><code>git clone &lt;your-fork&gt; &amp;&amp; cd agent-mail
-cargo build --release
-# binary: target/release/agent-mail
-alias agent-mail=$PWD/target/release/agent-mail   # or add to PATH</code></pre>
+  <p>One line — detects your platform, downloads the latest production build, verifies its
+    checksum, and puts it on your PATH:</p>
+  <pre><code>curl -fsSL https://shakakai.github.io/agent-mail/install.sh | bash</code></pre>
+  <p>Prefer to build from source, need an unreleased development build, or want a Windows
+    binary? See the <a href="downloads.html">downloads page</a> — and verify any download
+    with <code>sha256sum -c SHA256SUMS</code>.</p>
 
   <div class="step">
     <h3><span class="num">1</span>Create two identities</h3>

@@ -17,6 +17,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - run: cargo test --locked
+      - name: Installer script syntax check
+        run: bash -n docs/install.sh
 
   smoke:
     name: End-to-end MCP smoke (two identities)

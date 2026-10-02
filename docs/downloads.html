@@ -68,6 +68,13 @@
     history, always current. Verify downloads with <code>sha256sum -c SHA256SUMS</code>.
   </p>
 
+  <h2>Install (latest production build)</h2>
+  <pre><code>curl -fsSL https://shakakai.github.io/agent-mail/install.sh | bash</code></pre>
+  <p>Platform-detecting installer: verifies the SHA-256 checksum from the release before
+    installing to <code>~/.local/bin</code>. Pin a specific release with
+    <code>INSTALL_VERSION=v0.1.0-prod.3</code>, or choose another directory with
+    <code>INSTALL_PREFIX</code>. Windows: download the <code>.exe</code> below.</p>
+
   <div id="latest-banner" hidden>
     <span class="label" style="color: var(--ok); font-weight:700; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.06em;">Latest production build</span>
     <div class="tag" id="latest-tag"></div>
