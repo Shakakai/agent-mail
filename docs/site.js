@@ -31,6 +31,11 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.className = 'copy-btn';
         btn.textContent = 'copy';
         btn.setAttribute('aria-label', 'Copy to clipboard');
+        // Position inline as a fallback so a stale/missing stylesheet can
+        // never leave the button floating mid-code; CSS refines the look.
+        btn.style.position = 'absolute';
+        btn.style.top = '0.45rem';
+        btn.style.right = '0.45rem';
         btn.addEventListener('click', async () => {
             try {
                 await copyText(preText(pre));
