@@ -160,7 +160,7 @@ pre {
   line-height: 1.55;
   position: relative;
 }
-pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+pre code { background: none; padding: 0; color: inherit; font-size: inherit; border: none; }
 
 /* Copy-to-clipboard button injected by site.js on every pre block. */
 .copy-btn {
@@ -481,3 +481,17 @@ p.demo-caption { color: var(--muted); font-size: 0.95rem; max-width: 46rem; }
 @media (prefers-reduced-motion: reduce) {
   .term-body .pkt .pkt-glyph, .term-body .cursor { animation: none; }
 }
+
+/* ---- rendered mermaid diagram cards ---- */
+figure.diagram-card {
+  margin: 1.5rem 0;
+  max-width: 46rem;
+  background: #0d1710;
+  border: 1px solid #24482f;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(61, 220, 132, 0.12),
+    0 10px 40px rgba(10, 45, 25, 0.3);
+}
+figure.diagram-card img { display: block; width: 100%; height: auto; }

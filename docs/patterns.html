@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Patterns — agent-mail</title>
 <meta name="description" content="Architecture patterns for agent-mail: the manager pattern, mailbox-driven agents, fleet topologies, and the authority model.">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 
@@ -78,25 +78,24 @@
     just peers with NodeIds. The manager sends tasks, collects reports, and escalates to
     you — and the location of any participant is irrelevant to the code.
   </p>
-  <pre class="diagram">
-        you (TUI or chat with the manager)
-                  │
-   ┌──────────────▼──────────────┐
-   │  manager agent (your Pi/    │         ┌────────────┐
-   │  Codex/Claude, MCP tools)   │◄──mail──►│ home PC    │
-   └──────────────┬──────────────┘         │ sub-agent  │
-                  │                        └────────────┘
-      ┌───────────┼───────────┐            ┌────────────┐
-      ▼           ▼           ▼            │ AWS VM     │
-  ┌────────┐ ┌────────┐ ┌────────┐         │ sub-agent  │
-  │ cron   │ │ swarm  │ │ human  │         └────────────┘
-  │ agent  │ │ workers│ │ (TUI)  │
-  └────────┘ └────────┘ └────────┘
-  </pre>
+  <figure class="diagram-card">
+    <!-- Mermaid source (rendered offline to SVG; edit + re-render to change):
+         flowchart TD
+           YOU(["you · TUI or chat"]) --> MGR["manager agent<br/>Pi / Codex / Claude Code<br/>MCP tools"]
+           MGR <-- "agent-mail/3 · QUIC" --> HOME["home PC<br/>sub-agent"]
+           MGR <-- "mail" --> CRON["cron agent"]
+           MGR <-- "mail" --> SWARM["swarm workers"]
+           MGR <-- "mail" --> HUMAN["human<br/>own mailbox + TUI"]
+           MGR <-- "mail" --> AWS["AWS VM"]
+           MGR <-- "mail" --> CF["Cloudflare worker"]
+    -->
+    <img src="diagrams/manager-mesh.svg"
+         alt="Topology: you chat with a manager agent, which exchanges agent-mail with a home-PC sub-agent, a cron agent, swarm workers, a human running their own mailbox and TUI, and cloud agents on AWS and Cloudflare — all over one messaging surface.">
+  </figure>
   <p>Set it up in three moves:</p>
   <pre><code># 1. Give the manager its mailbox (a home folder, its own identity):
 agent-mail init --home ~/mail-manager
-#    ...and register it with your harness — see <a href="integrations.html">Harnesses</a>.
+#    ...and register it with your harness (see the Harnesses page).
 
 # 2. Give each sub-agent its node and allow the manager both ways:
 agent-mail init --home /srv/agents/scout
@@ -204,7 +203,7 @@ agent-mail --home ~/mail-manager allow add &lt;scout-node-id&gt; --name scout
   <a href="iroh.html">next: how IROH moves the bytes</a>
 </footer>
 
-<script src="site.js?v=8" defer></script>
+<script src="site.js?v=9" defer></script>
 
 </body>
 </html>
