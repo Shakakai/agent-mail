@@ -9,8 +9,36 @@ no accounts, no DNS entries to manage: agents find each other by ed25519
 public key, and IROH handles NAT traversal, hole punching, and relay fallback
 automatically.
 
-> **Status:** design phase. This README contains the proposed protocol
-> specification and technical plan. Nothing is implemented yet.
+## Status
+
+**M2 + M3 implemented and verified end-to-end** (Rust, iroh 1.3):
+identity, allowlist (inbound + outbound gating), `agent-mail/1` protocol
+(hello/send/ack/error), SQLite inbox/outbox with at-least-once delivery and
+daemon retry (backoff, capped at 10 attempts), `send`/`inbox`/`read`/`reply`
+CLI, human-audience filtering, and `addr`/`send --ticket` for explicit
+dialing. MCP (M4) and TUI (M5) are next.
+
+Verified against the live n0 network: two agents on one machine exchanging
+mail over QUIC (direct and/or relayed), offline queue delivering when the
+peer's daemon comes online, and allowlist rejects logging unauthorized
+NodeIds.
+
+### Lessons baked into the code
+
+- **The endpoint must be bound with your `SecretKey`**
+  (`Endpoint::builder(preset).secret_key(sk).bind()`). `Endpoint::bind(preset)`
+  alone generates an *ephemeral* identity — discovery records, relay
+  connections, and TLS identity all use it, so peers dial a key that does
+  not exist and everything times out with no useful error.
+- **NodeIds display as hex** in iroh 1.3 (`PublicKey`'s `Display`); z-base-32
+  (`to_z32()`) is only used inside pkarr/DNS records.
+- **n0's free public discovery (dns.iroh.link) has no uptime guarantee and
+  is rate-limited.** It flaps; publishes and lookups fail intermittently
+  for minutes at a time. Fine for dev — for production, self-host
+  `iroh-dns-server` or use explicit tickets on trusted networks.
+- QUIC send streams must be `finish()`ed explicitly; the framing layer does
+  not do it for you.
+
 
 ---
 
@@ -258,10 +286,11 @@ agent-mail read <msg-id> [--json]
 agent-mail reply <msg-id> [-m body] [--stdin]
 
 agent-mail daemon                  # run the mail daemon (foreground)
-agent-mail daemon install          # launchd / systemd service
-agent-mail mcp                     # serve MCP over stdio (for agents)
-agent-mail tui                     # human mail client (default when TTY)
-agent-mail debug dump <frame...>   # decode raw frames
+agent-mail daemon install          # launchd / systemd service (planned)
+agent-mail mcp                     # serve MCP over stdio (for agents, M4)
+agent-mail tui                     # human mail client (M5)
+agent-mail addr [--json]           # print my full address ticket (for --ticket)
+agent-mail debug dump <frame...>   # decode raw frames (planned)
 ```
 
 Everything is also available via MCP, which is the primary interface for
@@ -349,11 +378,11 @@ Key dependencies: `iroh`, `clap`, `serde`/`serde_json`, `toml`, `rusqlite`,
 ### Milestones
 
 1. **M1 — spec sign-off** (this document).
-2. **M2 — connectivity**: identity, allowlist, endpoint + ALPN handler,
-   `hello` handshake, two CLIs exchanging a raw frame over the public n0
-   relays. Proves the hardest part (NAT traversal) end-to-end.
-3. **M3 — mail**: envelope types, send/ack/error, SQLite inbox/outbox,
-   retry loop, full `send`/`inbox`/`read`/`reply` CLI.
+2. **M2 — connectivity**: ✅ done. Identity, allowlist, endpoint + ALPN
+   handler, `hello` handshake, delivery across the public n0 relays.
+3. **M3 — mail**: ✅ done. Envelope types, send/ack/error, SQLite
+   inbox/outbox, retry loop, full `send`/`inbox`/`read`/`reply` CLI,
+   `addr`/`--ticket` for explicit dialing.
 4. **M4 — MCP + skills**: `agent-mail mcp`, skill docs, a two-agent
    conversation over MCP in pi.
 5. **M5 — TUI + human mode**: ratatui client, audience filtering, human
