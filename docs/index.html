@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>agent-mail — peer-to-peer mail for AI agents</title>
-<meta name="description" content="agent-mail lets AI agents (and the humans they work with) exchange mail over IROH: authenticated, end-to-end encrypted, NAT-traversed, serverless.">
+<title>agent-mail — the communication surface for your agents</title>
+<meta name="description" content="agent-mail gives every AI agent a mailbox: an open, versioned protocol and a ready-to-run binary for agent-to-agent and agent-to-human mail over IROH — anywhere on the planet, no servers you run.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,8 +14,10 @@
     <a class="brand" href="index.html">agent<span>-</span>mail</a>
     <a class="navlink active" href="index.html">Why</a>
     <a class="navlink" href="quickstart.html">Quickstart</a>
+    <a class="navlink" href="patterns.html">Patterns</a>
     <a class="navlink" href="production.html">Production</a>
-    <a class="navlink" href="integrations.html">Agent harnesses</a>
+    <a class="navlink" href="integrations.html">Harnesses</a>
+    <a class="navlink" href="iroh.html">IROH</a>
     <a class="navlink" href="protocol.html">Protocol</a>
     <a class="navlink" href="reference.html">Reference</a>
     <a class="navlink" href="downloads.html">Download</a>
@@ -24,136 +26,97 @@
 
 <main>
   <section class="hero">
-    <h1>Mail for agents.<br>No servers. No accounts. No portals.</h1>
+    <h1>Every agent you run<br>gets a mailbox.</h1>
     <p class="lede">
-      agent-mail gives every AI agent a mailbox with a cryptographic address.
-      Agents exchange messages directly over <strong>IROH</strong> — authenticated by
-      ed25519 public key, end-to-end encrypted, NAT-traversed — while humans read
-      and write the same mail through a TUI, CLI, or their agent's chat.
-    </p>
-    <p class="lede" style="font-size:0.95rem; margin-top:1.25rem;">
-      Latest production build: see the <a href="downloads.html">downloads</a> page for
-      versioned Linux, macOS, and Windows binaries.
+      agent-mail is an open protocol — with a binary you can run right now — for
+      <strong>agent-to-agent and agent-to-human communication</strong>. Your agents stop
+      depending on where they live. One on your laptop, one in a rack in the cloud, one on a
+      machine at home, one that only wakes up on a schedule: they all talk to each other
+      through one surface, and the only thing anyone exchanges is a public key.
     </p>
     <div class="cta-row">
-      <a class="cta primary" href="quickstart.html">Quickstart — agents talking in 10 minutes</a>
-      <a class="cta secondary" href="downloads.html">Download binaries</a>
-      <a class="cta secondary" href="integrations.html">Wire up Pi / Codex / Claude Code</a>
+      <a class="cta primary" href="downloads.html">Download the binary</a>
+      <a class="cta secondary" href="quickstart.html">Quickstart — agents talking in 10 minutes</a>
+      <a class="cta secondary" href="protocol.html">Read the protocol</a>
     </div>
   </section>
 
-  <h2>Why agents need mail</h2>
+  <h2>What this is</h2>
   <p>
-    Multi-agent systems today communicate through whatever the orchestrator happens to
-    pass along: prompt context, shared files, database rows, or bespoke HTTP callbacks.
-    Each integration is one-off, unencrypted, unaudited, and invisible to the human
-    who is ultimately responsible. agent-mail replaces that sprawl with one mechanism
-    that has worked for humans for decades — <strong>mail</strong> — adapted to agents:
+    It's <em>mail</em> on its own terms: asynchronous, addressed by public key, delivered
+    at-least-once, queued while peers are away. Not email — no servers, no accounts, no DNS
+    to manage. Underneath, <a href="iroh.html">IROH</a> handles the networking: NAT
+    traversal, hole punching, relay fallback. You trade all of that complexity for one
+    question: <strong>do we have each other's public keys?</strong>
   </p>
-  <ul>
-    <li><strong>Addressable by construction.</strong> An agent's address is its public key.
-      There is nothing to register, renew, or squat. If you know the key, you can send;
-      if the recipient allows your key, it receives.</li>
-    <li><strong>Asynchronous by design.</strong> Peers are offline more often than they are
-      online. Mail queues in a persistent outbox and retries with backoff — an agent on a
-      laptop, a cron job, or a CI runner can all receive mail without a public endpoint.</li>
-    <li><strong>Trust you can reason about.</strong> Both directions are gated by an explicit
-      allowlist of NodeIds. There is no unauthenticated state to defend: a peer is either
-      on the list or it is dropped, and rejections are recorded and visible.</li>
-    <li><strong>Humans get their own mailbox.</strong> A person runs their own node —
-      own private key, own <code>--home</code> folder, own TUI — and agents address
-      them like any peer. No shared stores, no mixed inboxes.</li>
-    <li><strong>Auditability for free.</strong> Every message lands in a local SQLite store:
-      threads, delivery status, retries, and failures are queryable — by the agent's tools
-      and by the human's terminal alike.</li>
-  </ul>
-
-  <h2>What it looks like</h2>
-  <pre class="diagram">
-┌──────────────┐   QUIC + agent-mail/2   ┌──────────────┐
-│   Agent A    │ ◄─────────────────────► │   Agent B    │
-│  (this tool) │   direct, or via relay  │  (this tool) │
-└──────┬───────┘                         └──────┬───────┘
-       │                                        │
-  ┌────┴────┐                              ┌────┴────┐
-  │ MCP srv │ ◄── stdio ── pi / codex /   │ MCP srv │ ◄── stdio ── another agent
-  │ daemon  │      claude code            │ daemon  │
-  │ SQLite  │                              │ SQLite  │
-  └────┬────┘                              └────┬────┘
-       │                                        │
-   human TUI / CLI                          human TUI / CLI
-  </pre>
-  <p>
-    Each installation runs one identity, one store, and — while an agent is connected —
-    one embedded daemon that owns the IROH endpoint. The MCP server is the agent interface;
-    the TUI and CLI are the human interfaces. Everything reads and writes the same mail.
-  </p>
-
-  <h2>Built for AI engineers</h2>
-  <table>
-    <tr><th>Concern</th><th>How agent-mail handles it</th></tr>
-    <tr>
-      <td><strong>Identity</strong></td>
-      <td>ed25519 keypair, generated locally by <code>agent-mail init</code>. The NodeId
-        <em>is</em> the address — verified by the QUIC/TLS handshake itself, not by a certificate.</td>
-    </tr>
-    <tr>
-      <td><strong>Connectivity</strong></td>
-      <td>IROH handles NAT traversal, hole punching, and relay fallback. No open ports, no DNS
-        records, no VPN. Works across home NATs, cloud VMs, and laptops.</td>
-    </tr>
-    <tr>
-      <td><strong>Offline peers</strong></td>
-      <td>Persistent outbox with exponential backoff (30s → 15min). After 10 attempts a message
-        is marked <code>failed</code> and <em>stays visible</em> — silent loss is a bug, not a feature.</td>
-    </tr>
-    <tr>
-      <td><strong>Agent integration</strong></td>
-      <td>A stdio MCP server with 9 tools (send, reply, inbox, threads, outbox, identity,
-        allowlist) plus a subscribable <code>agent-mail://inbox</code> resource for push-style
-        notification. Ships with a ready-made skill for agent instructions.</td>
-    </tr>
-    <tr>
-      <td><strong>Human integration</strong></td>
-      <td>ratatui TUI with threads, compose/reply, allowlist editor, and rejection log; every
-        TUI action has a CLI equivalent for scripting.</td>
-    </tr>
-    <tr>
-      <td><strong>Security model</strong></td>
-      <td>Allowlist gates both directions and is re-read per connection. Secret key is 0600;
-        mail store files are owner-only. Trust changes via MCP are disabled by default.</td>
-    </tr>
-    <tr>
-      <td><strong>Ops</strong></td>
-      <td>Single static binary, no runtime dependencies. Config via one TOML file and four env
-        vars. Runs as a foreground daemon, an embedded per-session daemon, or a launchd/systemd service.</td>
-    </tr>
-  </table>
-
-  <h2>When mail — and when not</h2>
-  <p>agent-mail is the right tool when:</p>
-  <ul>
-    <li>two or more agents (or an agent and a human) need to <strong>hand off work, ask questions,
-      or report results</strong> without sharing a host or an orchestrator;</li>
-    <li>peers come and go (laptops, spot instances, scheduled jobs) and you need
-      <strong>store-and-forward</strong> semantics;</li>
-    <li>you want a <strong>durable, queryable record</strong> of what agents told each other.</li>
-  </ul>
-  <p>It is deliberately <em>not</em> a RPC framework: delivery is at-least-once, messages are
-    plain text, and "queries" are conversations, not synchronous call/response. For
-    millisecond-latency fan-out inside one process, keep your function calls; use mail at
-    the trust and availability boundaries.</p>
-
-  <div class="callout tip">
-    <p class="label">Try it</p>
-    <p>The <a href="quickstart.html">quickstart</a> gets two agents exchanging mail on one
-      machine in about 10 minutes — no GitHub account, no cloud, nothing to deploy.</p>
+  <div class="callout">
+    <p class="label">Two ways to use it</p>
+    <p><strong>Run the binary.</strong> One static executable gives you a daemon, an MCP
+      server for your agents, a TUI for humans, and a CLI — self-contained folders per node
+      (<code>--home</code>), zero infrastructure.</p>
+    <p><strong>Implement the protocol.</strong> The wire format is small, versioned, and
+      fully specified. Point your software at the
+      <a href="protocol.html">protocol page</a> and make it compatible — Python, TypeScript,
+      mobile, anything that can speak QUIC and JSON.</p>
   </div>
+
+  <h2>Why it matters</h2>
+  <ul>
+    <li><strong>Location stops existing.</strong> An agent on your home network, a hosted
+      agent on AWS or Cloudflare, an agent on your laptop: identical addressing, identical
+      trust model, identical code path. Local and remote are the same case.</li>
+    <li><strong>One surface, many agents.</strong> Give every agent you run a mailbox and you
+      have a single communication surface with all of them — tasking, reporting, approvals,
+      file delivery (attachments up to 20&nbsp;MiB), all over one mechanism.</li>
+    <li><strong>A manager pattern that scales down and up.</strong> Your agent harness —
+      Pi, Codex, Claude Code — becomes a manager that talks to sub-agents through mail.
+      The sub-agents can be anywhere. See <a href="patterns.html">patterns</a>.</li>
+    <li><strong>Humans are peers, not afterthoughts.</strong> A person runs their own
+      mailbox — own key, own folder, own TUI — and agents address them like anyone else.
+      No shared inboxes, no special cases.</li>
+    <li><strong>You own the stack.</strong> The MCP server runs on your machine; the network
+      layer is open-source IROH; the protocol is documented and yours. No vendor's cloud
+      sits between your agents. Beholden to no one.</li>
+  </ul>
+
+  <h2>What people build with it</h2>
+  <ul>
+    <li><strong>Overnight research agents</strong> that mail you a summary — and the data
+      files — by morning.</li>
+    <li><strong>Swarms that split a task</strong>: a manager decomposes, workers report into
+      one thread, results come back with attachments.</li>
+    <li><strong>Cron agents</strong> that wake on a schedule, check their mailbox for
+      instructions, act, and report back.</li>
+    <li><strong>Mailboxes as an agent's only I/O.</strong> Tell your agent: when idle, check
+      your mail. That single instruction turns a mailbox into a control channel you can
+      drive from anywhere — even, one day, a mobile app you build yourself on this protocol.</li>
+  </ul>
+  <p>Full walkthroughs, with copy-paste harness snippets, live on the
+    <a href="patterns.html">patterns page</a>.</p>
+
+  <h2>Honest by design</h2>
+  <p>
+    The trust model is an explicit allowlist of public keys, checked in both directions, with
+    rejections logged. The transport is end-to-end encrypted and authenticated by the keys
+    themselves. You run no servers — IROH's open relays assist with initial connectivity and
+    NAT punching, and you can <a href="iroh.html">self-host those too</a> if you want.
+    Messages are plain text with attachments, capped at sensible sizes, and everything lands
+    in a local SQLite store you can query, back up, and audit.
+  </p>
+
+  <h2>Status</h2>
+  <p>
+    Pre-1.0 and evolving: the protocol is versioned (<code>agent-mail/3</code>) and
+    incompatible changes bump the version with a clean handshake failure, never a silent
+    surprise. Builds for Linux, macOS, and Windows ship from the
+    <a href="downloads.html">downloads</a> page; production builds track the
+    <code>production</code> branch.
+  </p>
 </main>
 
 <footer class="site">
-  agent-mail — peer-to-peer mail for AI agents (and the humans they work with) ·
-  <a href="https://iroh.computer">iroh.computer</a>
+  agent-mail — an open communication protocol for agents, with a binary you can run today ·
+  <a href="https://github.com/Shakakai/agent-mail">GitHub</a>
 </footer>
 
 </body>

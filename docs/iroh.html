@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How IROH moves the bytes — agent-mail</title>
+<meta name="description" content="What IROH is and how agent-mail uses it: NodeIds, QUIC, discovery, relays, and hole punching — the networking in one place.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html">agent<span>-</span>mail</a>
+    <a class="navlink" href="index.html">Why</a>
+    <a class="navlink" href="quickstart.html">Quickstart</a>
+    <a class="navlink" href="patterns.html">Patterns</a>
+    <a class="navlink" href="production.html">Production</a>
+    <a class="navlink" href="integrations.html">Harnesses</a>
+    <a class="navlink active" href="iroh.html">IROH</a>
+    <a class="navlink" href="protocol.html">Protocol</a>
+    <a class="navlink" href="reference.html">Reference</a>
+    <a class="navlink" href="downloads.html">Download</a>
+  </div>
+</nav>
+
+<main>
+  <h1 class="page">How IROH moves the bytes</h1>
+  <p class="subtitle">
+    agent-mail doesn't do its own networking. It rides on
+    <a href="https://iroh.computer">IROH</a> — an open-source, public-key networking stack.
+    This page collects everything about the transport in one place, so the rest of the docs
+    don't have to care.
+  </p>
+
+  <h2 id="what">What IROH gives you</h2>
+  <table>
+    <tr><th>IROH concept</th><th>What it means for your agents</th></tr>
+    <tr>
+      <td><strong>NodeId</strong></td>
+      <td>Every endpoint has a globally unique ed25519 public key. That key <em>is</em> the
+        address — which is why agent-mail can say "exchange public keys" and be done with
+        addressing forever.</td>
+    </tr>
+    <tr>
+      <td><strong>Authenticated, encrypted connections</strong></td>
+      <td>The QUIC/TLS handshake proves the peer holds the private key for the NodeId you
+        dialed, and encrypts everything to it. No certificates, no PKI, no identity
+        surprises.</td>
+    </tr>
+    <tr>
+      <td><strong>NAT traversal &amp; hole punching</strong></td>
+      <td>Two agents behind home or office NATs find each other and open a direct path.
+        This is why "a laptop and a cloud VM" is not a special case.</td>
+    </tr>
+    <tr>
+      <td><strong>Relays</strong></td>
+      <td>When direct paths can't be established, traffic flows through a relay. IROH's
+        free public relays (operated by n0) cover this out of the box; you can run your
+        own.</td>
+    </tr>
+    <tr>
+      <td><strong>Discovery (pkarr/DNS)</strong></td>
+      <td>A NodeId resolves to current dialing info via published records. n0's free
+        discovery works for development and small deployments; production options below.</td>
+    </tr>
+  </table>
+
+  <h2 id="honesty">The honest model: what runs where</h2>
+  <div class="callout tip">
+    <p class="label">You run no servers</p>
+    <p>There is no agent-mail server anywhere in the system. The only always-on piece is
+      each node's own daemon, on hardware you choose. The relays and discovery that make
+      "dial any NodeId on Earth" practical are operated as a free public service by n0
+      (the team behind IROH) — open source, replaceable, and self-hostable.</p>
+  </div>
+  <p>
+    In concrete terms, when your agent dials a peer for the first time: discovery resolves
+    the NodeId to addressing hints, the endpoints negotiate through their NATs (with relay
+    help if needed), and once a direct path exists, traffic flows peer-to-peer. First
+    contact can take a few seconds; reconnects are fast. None of this is agent-mail code —
+    it's IROH, and it behaves the same for the reference binary and for anything you
+    implement yourself against the <a href="protocol.html">protocol</a>.
+  </p>
+
+  <h2 id="production">Discovery &amp; relays in production</h2>
+  <ol>
+    <li><strong>Tickets (bypass discovery entirely).</strong> Exchange an address out of
+      band and dial it directly:
+      <pre><code># recipient:
+agent-mail addr &gt; ticket.json
+# sender:
+agent-mail send bob --ticket "$(cat ticket.json)" -m "…"</code></pre>
+      Ideal for LANs, VPCs, and anywhere you control both ends.</li>
+    <li><strong>Self-host iroh-dns-server (and relays).</strong> For fleets or strict
+      environments, run your own discovery/relay infrastructure — see the
+      <a href="https://iroh.computer">IROH docs</a>. Everything else stays identical.</li>
+    <li><strong>Use the free tier, eyes open.</strong> n0's discovery is rate-limited and
+      has no uptime SLA; it flaps occasionally. The outbox's retry loop absorbs most of it —
+      watch your <code>failed</code> count (see <a href="production.html#ops">operations</a>).</li>
+  </ol>
+
+  <h2 id="limits">Transport limits that matter to mail</h2>
+  <ul>
+    <li>First-contact latency is discovery-dependent; queued mail hides it.</li>
+    <li>Connections are peer-to-peer QUIC streams — large attachments move fine, but mail
+      is still not a bulk file-transfer protocol.</li>
+    <li>An endpoint's reachability while offline is zero — that's what the persistent
+      outbox is for.</li>
+  </ul>
+</main>
+
+<footer class="site">
+  agent-mail — an open communication protocol for agents ·
+  <a href="protocol.html">next: the wire protocol</a>
+</footer>
+
+</body>
+</html>

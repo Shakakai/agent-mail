@@ -9,7 +9,7 @@ use crate::allowlist::{AllowList, PeerEntry};
 use crate::client;
 use crate::config::{Config, Paths};
 use crate::store::Store;
-use crate::{daemon, identity, mcp, tui};
+use crate::{daemon, identity, mcp, ops, tui};
 
 #[derive(Parser)]
 #[command(
@@ -61,6 +61,9 @@ enum Commands {
         /// bypassing discovery. Useful on LANs and for debugging.
         #[arg(long)]
         ticket: Option<String>,
+        /// Attach a file (repeatable; each ≤ 20 MiB).
+        #[arg(long = "attach", value_name = "FILE")]
+        attach: Vec<std::path::PathBuf>,
         /// Output the queued message as JSON.
         #[arg(long)]
         json: bool,
@@ -89,6 +92,9 @@ enum Commands {
     /// Read a message by its key (marks it read).
     Read {
         msg_key: String,
+        /// Extract attachments into this directory.
+        #[arg(long, value_name = "DIR")]
+        save_attachments: Option<std::path::PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -99,6 +105,9 @@ enum Commands {
         message: Option<String>,
         #[arg(long)]
         stdin: bool,
+        /// Attach a file (repeatable; each ≤ 20 MiB).
+        #[arg(long = "attach", value_name = "FILE")]
+        attach: Vec<std::path::PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -139,17 +148,23 @@ pub async fn run() -> Result<()> {
             stdin,
             ticket,
             json,
-        } => cmd_send(&paths, &config, &peer, &message, stdin, ticket.as_deref(), json).await,
+            attach,
+        } => cmd_send(&paths, &config, &peer, &message, stdin, ticket.as_deref(), attach, json).await,
         Commands::Addr { json } => cmd_addr(&paths, json).await,
         Commands::Inbox { peer, json } => cmd_inbox(&paths, peer, json),
         Commands::Outbox { json } => cmd_outbox(&paths, json),
-        Commands::Read { msg_key, json } => cmd_read(&paths, &msg_key, json),
+        Commands::Read {
+            msg_key,
+            save_attachments,
+            json,
+        } => cmd_read(&paths, &msg_key, save_attachments, json),
         Commands::Reply {
             msg_key,
             message,
             stdin,
+            attach,
             json,
-        } => cmd_reply(&paths, &config, &msg_key, &message, stdin, json).await,
+        } => cmd_reply(&paths, &config, &msg_key, &message, stdin, attach, json).await,
     }
 }
 
@@ -268,6 +283,7 @@ async fn cmd_send(
     message: &Option<String>,
     stdin: bool,
     ticket: Option<&str>,
+    attach: Vec<std::path::PathBuf>,
     json: bool,
 ) -> Result<()> {
     let sk = identity::load(paths)?;
@@ -278,31 +294,30 @@ async fn cmd_send(
     if body.is_empty() {
         bail!("message body is empty");
     }
-    if body.len() > config.max_message_bytes {
-        bail!(
-            "message body is {} bytes, exceeds the {}-byte limit",
-            body.len(),
-            config.max_message_bytes
-        );
+    let mut attachments = Vec::new();
+    for path in &attach {
+        attachments.push(ops::attachment_from_file(path)?);
     }
 
     let store = Store::open(paths)?;
-    let thread_id = ulid::Ulid::generate().to_string();
-
+    let msg = crate::proto::Message {
+        id: ulid::Ulid::generate().to_string(),
+        thread_id: ulid::Ulid::generate().to_string(),
+        in_reply_to: None,
+        from: me.clone(),
+        to: peer_id.clone(),
+        created_at: crate::util::now_secs(),
+        content_type: "text/plain".to_string(),
+        body: body.clone(),
+        attachments,
+    };
+    ops::validate_message(config, &msg)?;
+    store.enqueue_outgoing(&msg, config.retry_base_secs)?;
     let endpoint = Endpoint::builder(presets::N0)
         .secret_key(sk.clone())
         .bind()
         .await
         .map_err(crate::util::de)?;
-    let msg = store.enqueue_outgoing(
-        &me,
-        &peer_id,
-        &thread_id,
-        None,
-        "text/plain",
-        &body,
-        config.retry_base_secs,
-    )?;
     let result = if peer_id == me && ticket.is_none() {
         // Loopback: iroh can't dial our own NodeId; write into our inbox.
         store.record_incoming(&msg)?;
@@ -413,13 +428,43 @@ fn cmd_inbox(paths: &Paths, peer: Option<String>, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_read(paths: &Paths, msg_key: &str, json: bool) -> Result<()> {
+fn cmd_read(
+    paths: &Paths,
+    msg_key: &str,
+    save_attachments: Option<std::path::PathBuf>,
+    json: bool,
+) -> Result<()> {
     let store = Store::open(paths)?;
     let msg = store
         .get(msg_key)?
         .with_context(|| format!("no message `{msg_key}`"))?;
     if msg.direction == "in" {
         store.mark_read(&msg.msg_key)?;
+    }
+    if let Some(dir) = save_attachments {
+        std::fs::create_dir_all(&dir)?;
+        for meta in &msg.attachments {
+            let data = store
+                .read_attachment(&msg.msg_key, meta.index)?
+                .with_context(|| format!("no attachment {} on this message", meta.index))?;
+            let bytes = base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                &data.data_base64,
+            )?;
+            let out = dir.join(&meta.name);
+            std::fs::write(&out, &bytes)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&out)?.permissions();
+                perms.set_mode(0o600);
+                std::fs::set_permissions(&out, perms)?;
+            }
+            println!("saved attachment: {}", out.display());
+        }
+        if msg.attachments.is_empty() {
+            println!("message has no attachments");
+        }
     }
     if json {
         println!("{}", serde_json::to_string_pretty(&msg)?);
@@ -428,6 +473,12 @@ fn cmd_read(paths: &Paths, msg_key: &str, json: bool) -> Result<()> {
         println!("to:    {}", msg.to_id);
         println!("thread: {}", msg.thread_id);
         println!("at:    {}", msg.created_at);
+        for a in &msg.attachments {
+            println!(
+                "attach: {} ({} bytes, {})",
+                a.name, a.size, a.content_type
+            );
+        }
         println!();
         println!("{}", msg.body);
     }
@@ -440,6 +491,7 @@ async fn cmd_reply(
     msg_key: &str,
     message: &Option<String>,
     stdin: bool,
+    attach: Vec<std::path::PathBuf>,
     json: bool,
 ) -> Result<()> {
     let sk = identity::load(paths)?;
@@ -455,28 +507,28 @@ async fn cmd_reply(
     if body.is_empty() {
         bail!("message body is empty");
     }
-    if body.len() > config.max_message_bytes {
-        bail!(
-            "message body is {} bytes, exceeds the {}-byte limit",
-            body.len(),
-            config.max_message_bytes
-        );
+    let mut attachments = Vec::new();
+    for path in &attach {
+        attachments.push(ops::attachment_from_file(path)?);
     }
 
     // For an inbound message, the wire `in_reply_to` is the sender's own
     // message id (the `remote_id` of our row), not our local row key.
-    let reply_to = Some(original.remote_id.as_str());
-    let thread_id = original.thread_id.clone();
-    let peer_id = original.from_id.clone();
-    let msg = store.enqueue_outgoing(
-        &me,
-        &peer_id,
-        &thread_id,
-        reply_to,
-        "text/plain",
-        &body,
-        config.retry_base_secs,
-    )?;
+    let reply_to = Some(original.remote_id.clone());
+    let msg = crate::proto::Message {
+        id: ulid::Ulid::generate().to_string(),
+        thread_id: original.thread_id.clone(),
+        in_reply_to: reply_to,
+        from: me.clone(),
+        to: original.from_id.clone(),
+        created_at: crate::util::now_secs(),
+        content_type: "text/plain".to_string(),
+        body: body.clone(),
+        attachments,
+    };
+    ops::validate_message(config, &msg)?;
+    store.enqueue_outgoing(&msg, config.retry_base_secs)?;
+    let peer_id = msg.to.clone();
 
     let result = if peer_id == me {
         // Loopback: iroh can't dial our own NodeId; write into our inbox.

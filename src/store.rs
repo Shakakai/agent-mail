@@ -4,13 +4,14 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
 use crate::config::Paths;
-use crate::proto::Message;
+use crate::proto::{Attachment, Message};
 use crate::util::now_secs;
 
 /// Delivery attempts before an outgoing message is marked `failed`.
@@ -43,11 +44,29 @@ CREATE TABLE IF NOT EXISTS rejections (
     count     INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (node_id)
 );
+CREATE TABLE IF NOT EXISTS attachments (
+    msg_key      TEXT NOT NULL REFERENCES messages(msg_key) ON DELETE CASCADE,
+    ord          INTEGER NOT NULL,
+    name         TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size         INTEGER NOT NULL,
+    data         BLOB NOT NULL,
+    PRIMARY KEY (msg_key, ord)
+);
 -- One-time migration (idempotent): rows exhausted under the old hardcoded
 -- filter stay 'queued' forever and were invisible; surface them as failed.
 UPDATE messages SET status = 'failed'
  WHERE direction = 'out' AND status = 'queued' AND attempts >= 10;
 ";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AttachmentMeta {
+    /// 0-based position within the message.
+    pub index: usize,
+    pub name: String,
+    pub content_type: String,
+    pub size: u64,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StoredMessage {
@@ -68,6 +87,10 @@ pub struct StoredMessage {
     pub read_at: Option<u64>,
     pub status: String,
     pub attempts: u64,
+    /// Attachment metadata (names, types, sizes) — payload on demand via
+    /// `read_attachment`.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -127,8 +150,9 @@ impl Store {
         })
     }
 
-    /// Record an incoming message. Returns false if it is a duplicate
-    /// (same sender msg id already seen) — we still ack duplicates.
+    /// Record an incoming message (with any attachments). Returns false if
+    /// it is a duplicate (same sender msg id already seen) — we still ack
+    /// duplicates.
     pub fn record_incoming(&self, msg: &Message) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let key = ulid::Ulid::generate().to_string();
@@ -153,35 +177,18 @@ impl Store {
                 now,
             ],
         )?;
+        if n > 0 {
+            store_attachments(&conn, &key, &msg.attachments)?;
+        }
         Ok(n > 0)
     }
 
-    /// Queue an outgoing message. The wire `id` is the row's `msg_key`, so
-    /// peers can dedupe retries and reference it in `in_reply_to`. The
-    /// first daemon retry is scheduled `first_retry_secs` out so the daemon
-    /// never races the interactive delivery attempt that enqueued this row.
-    pub fn enqueue_outgoing(
-        &self,
-        me: &str,
-        peer: &str,
-        thread_id: &str,
-        in_reply_to: Option<&str>,
-        content_type: &str,
-        body: &str,
-        first_retry_secs: u64,
-    ) -> Result<Message> {
-        let key = ulid::Ulid::generate().to_string();
-        let now = now_secs();
-        let msg = Message {
-            id: key.clone(),
-            thread_id: thread_id.to_string(),
-            in_reply_to: in_reply_to.map(|s| s.to_string()),
-            from: me.to_string(),
-            to: peer.to_string(),
-            created_at: now,
-            content_type: content_type.to_string(),
-            body: body.to_string(),
-        };
+    /// Queue an outgoing message (with any attachments). The wire `id` is
+    /// the row's `msg_key`, so peers can dedupe retries and reference it in
+    /// `in_reply_to`. The first daemon retry is scheduled `first_retry_secs`
+    /// out so the daemon never races the interactive delivery attempt that
+    /// enqueued this row.
+    pub fn enqueue_outgoing(&self, msg: &Message, first_retry_secs: u64) -> Result<()> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO messages
              (msg_key, remote_id, direction, from_id, to_id, peer, thread_id,
@@ -190,18 +197,20 @@ impl Store {
              VALUES (?1, ?1, 'out', ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, 'queued',
                      ?8 + ?9)",
             params![
-                key,
-                me,
-                peer,
-                thread_id,
-                in_reply_to,
-                content_type,
-                body,
-                now as i64,
+                msg.id,
+                msg.from,
+                msg.to,
+                msg.thread_id,
+                msg.in_reply_to,
+                msg.content_type,
+                msg.body,
+                msg.created_at as i64,
                 first_retry_secs as i64,
             ],
         )?;
-        Ok(msg)
+        let conn = self.conn.lock().unwrap();
+        store_attachments(&conn, &msg.id, &msg.attachments)?;
+        Ok(())
     }
 
     pub fn mark_delivered(&self, msg_key: &str, received_at: u64) -> Result<()> {
@@ -234,58 +243,71 @@ impl Store {
 
     /// Outgoing messages due for a delivery attempt.
     pub fn due_outgoing(&self, limit: usize) -> Result<Vec<QueuedMessage>> {
-        let conn = self.conn.lock().unwrap();
-        let now = now_secs() as i64;
-        let mut stmt = conn.prepare(
-            "SELECT msg_key, peer, thread_id, in_reply_to, content_type,
-                    body, created_at, from_id, to_id, attempts
-             FROM messages
-             WHERE direction = 'out' AND status IN ('queued', 'failed')
-               AND attempts < ?3
-               AND (next_retry_at IS NULL OR next_retry_at <= ?1)
-             ORDER BY created_at
-             LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![now, limit as i64, MAX_ATTEMPTS as i64], |row| {
-            Ok(QueuedMessage {
-                msg_key: row.get(0)?,
-                peer: row.get(1)?,
-                message: Message {
-                    id: row.get(0)?,
-                    thread_id: row.get(2)?,
-                    in_reply_to: row.get(3)?,
-                    from: row.get(7)?,
-                    to: row.get(8)?,
-                    created_at: row.get::<_, i64>(6)? as u64,
-                    content_type: row.get(4)?,
-                    body: row.get(5)?,
-                },
-                attempts: row.get::<_, i64>(9)? as u64,
-            })
-        })?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        let due: Vec<QueuedMessage> = {
+            let conn = self.conn.lock().unwrap();
+            let now = now_secs() as i64;
+            let mut stmt = conn.prepare(
+                "SELECT msg_key, peer, thread_id, in_reply_to, content_type,
+                        body, created_at, from_id, to_id, attempts
+                 FROM messages
+                 WHERE direction = 'out' AND status IN ('queued', 'failed')
+                   AND attempts < ?3
+                   AND (next_retry_at IS NULL OR next_retry_at <= ?1)
+                 ORDER BY created_at
+                 LIMIT ?2",
+            )?;
+            let rows = stmt.query_map(params![now, limit as i64, MAX_ATTEMPTS as i64], |row| {
+                Ok(QueuedMessage {
+                    msg_key: row.get(0)?,
+                    peer: row.get(1)?,
+                    message: Message {
+                        id: row.get(0)?,
+                        thread_id: row.get(2)?,
+                        in_reply_to: row.get(3)?,
+                        from: row.get(7)?,
+                        to: row.get(8)?,
+                        created_at: row.get::<_, i64>(6)? as u64,
+                        content_type: row.get(4)?,
+                        body: row.get(5)?,
+                        attachments: Vec::new(),
+                    },
+                    attempts: row.get::<_, i64>(9)? as u64,
+                })
+            })?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        let mut due = due;
+        for q in due.iter_mut() {
+            q.message.attachments = self.attachments_full(&q.msg_key)?;
+        }
+        Ok(due)
     }
 
     pub fn list_inbox(&self, peer: Option<&str>) -> Result<Vec<StoredMessage>> {
-        let conn = self.conn.lock().unwrap();
-        let mut conditions = vec!["direction = 'in'".to_string()];
-        if peer.is_some() {
-            conditions.push("peer = ?1".to_string());
-        }
-        let sql = format!(
-            "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
-                    content_type, body, created_at, received_at, read_at,
-                    status, attempts
-             FROM messages WHERE {} ORDER BY received_at DESC LIMIT 500",
-            conditions.join(" AND ")
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = if let Some(peer) = peer {
-            stmt.query_map(params![peer], map_stored)?
-        } else {
-            stmt.query_map(params![], map_stored)?
+        let rows: Vec<StoredMessage> = {
+            let conn = self.conn.lock().unwrap();
+            let mut conditions = vec!["direction = 'in'".to_string()];
+            if peer.is_some() {
+                conditions.push("peer = ?1".to_string());
+            }
+            let sql = format!(
+                "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
+                        content_type, body, created_at, received_at, read_at,
+                        status, attempts
+                 FROM messages WHERE {} ORDER BY received_at DESC LIMIT 500",
+                conditions.join(" AND ")
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = if let Some(peer) = peer {
+                stmt.query_map(params![peer], map_stored)?
+            } else {
+                stmt.query_map(params![], map_stored)?
+            };
+            rows.collect::<std::result::Result<_, _>>()?
         };
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        let mut rows = rows;
+        self.hydrate_attachments(&mut rows)?;
+        Ok(rows)
     }
 
     /// Conversation overview: one row per thread, most recent activity first.
@@ -376,31 +398,134 @@ impl Store {
 
     /// Outgoing messages awaiting delivery or given up, oldest first.
     pub fn list_outgoing(&self) -> Result<Vec<StoredMessage>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
-                    content_type, body, created_at, received_at, read_at,
-                    status, attempts
-             FROM messages
-             WHERE direction = 'out' AND status IN ('queued', 'failed')
-             ORDER BY created_at
-             LIMIT 500",
-        )?;
-        let rows = stmt.query_map(params![], map_stored)?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        let mut rows: Vec<StoredMessage> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare(
+                "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
+                        content_type, body, created_at, received_at, read_at,
+                        status, attempts
+                 FROM messages
+                 WHERE direction = 'out' AND status IN ('queued', 'failed')
+                 ORDER BY created_at
+                 LIMIT 500",
+            )?;
+            stmt.query_map(params![], map_stored)?
+                .collect::<std::result::Result<_, _>>()?
+        };
+        self.hydrate_attachments(&mut rows)?;
+        Ok(rows)
     }
 
     /// Messages of one thread, chronological.
     pub fn thread_messages(&self, thread_id: &str) -> Result<Vec<StoredMessage>> {
+        let mut rows: Vec<StoredMessage> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare(
+                "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
+                        content_type, body, created_at, received_at, read_at,
+                        status, attempts
+                 FROM messages WHERE thread_id = ?1 ORDER BY created_at",
+            )?;
+            stmt.query_map(params![thread_id], map_stored)?
+                .collect::<std::result::Result<_, _>>()?
+        };
+        self.hydrate_attachments(&mut rows)?;
+        Ok(rows)
+    }
+
+    /// Full attachment (payload base64-encoded) by message key and index.
+    pub fn read_attachment(&self, msg_key: &str, index: usize) -> Result<Option<Attachment>> {
+        use base64::Engine;
+        let conn = self.conn.lock().unwrap();
+        let row = conn
+            .query_row(
+                "SELECT name, content_type, size, data FROM attachments
+                 WHERE msg_key = ?1 AND ord = ?2",
+                params![msg_key, index as i64],
+                |r| {
+                    let name: String = r.get(0)?;
+                    let ct: String = r.get(1)?;
+                    let size: i64 = r.get(2)?;
+                    let data: Vec<u8> = r.get(3)?;
+                    Ok((name, ct, size, data))
+                },
+            )
+            .optional()?;
+        match row {
+            None => Ok(None),
+            Some((name, ct, size, data)) => Ok(Some(Attachment {
+                name,
+                content_type: ct,
+                size: size as u64,
+                data_base64: base64::engine::general_purpose::STANDARD.encode(&data),
+            })),
+        }
+    }
+
+    /// All attachments of a message with payloads (base64), wire order.
+    fn attachments_full(&self, msg_key: &str) -> Result<Vec<Attachment>> {
+        use base64::Engine;
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
-                    content_type, body, created_at, received_at, read_at,
-                    status, attempts
-             FROM messages WHERE thread_id = ?1 ORDER BY created_at",
+            "SELECT ord, name, content_type, size, data FROM attachments
+             WHERE msg_key = ?1 ORDER BY ord",
         )?;
-        let rows = stmt.query_map(params![thread_id], map_stored)?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        let rows = stmt.query_map(params![msg_key], |r| {
+            let ord: i64 = r.get(0)?;
+            let name: String = r.get(1)?;
+            let ct: String = r.get(2)?;
+            let size: i64 = r.get(3)?;
+            let data: Vec<u8> = r.get(4)?;
+            Ok((
+                ord,
+                Attachment {
+                    name,
+                    content_type: ct,
+                    size: size as u64,
+                    data_base64: base64::engine::general_purpose::STANDARD.encode(&data),
+                },
+            ))
+        })?;
+        let mut v: Vec<_> = rows.collect::<std::result::Result<_, _>>()?;
+        v.sort_by_key(|(ord, _)| *ord);
+        Ok(v.into_iter().map(|(_, a)| a).collect())
+    }
+
+    /// Attach metadata for a set of messages, merged into the rows in place.
+    fn hydrate_attachments(&self, rows: &mut [StoredMessage]) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT msg_key, ord, name, content_type, size FROM attachments
+             WHERE msg_key = ?1 ORDER BY ord",
+        )?;
+        let mut map: HashMap<String, Vec<AttachmentMeta>> = HashMap::new();
+        for key in rows.iter().map(|r| r.msg_key.clone()).collect::<Vec<_>>() {
+            let found = stmt
+                .query_map(params![key], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        AttachmentMeta {
+                            index: r.get::<_, i64>(1)? as usize,
+                            name: r.get(2)?,
+                            content_type: r.get(3)?,
+                            size: r.get::<_, i64>(4)? as u64,
+                        },
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for (k, m) in found {
+                map.entry(k).or_default().push(m);
+            }
+        }
+        for row in rows.iter_mut() {
+            if let Some(m) = map.remove(&row.msg_key) {
+                row.attachments = m;
+            }
+        }
+        Ok(())
     }
 
     /// Mark every inbound message in a thread as read.
@@ -414,17 +539,22 @@ impl Store {
     }
 
     pub fn get(&self, msg_key: &str) -> Result<Option<StoredMessage>> {
-        let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
-                    content_type, body, created_at, received_at, read_at,
-                    status, attempts
-             FROM messages WHERE msg_key = ?1",
-            params![msg_key],
-            map_stored,
-        )
-        .optional()
-        .map_err(Into::into)
+        let mut row: Option<StoredMessage> = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
+                        content_type, body, created_at, received_at, read_at,
+                        status, attempts
+                 FROM messages WHERE msg_key = ?1",
+                params![msg_key],
+                map_stored,
+            )
+            .optional()?
+        };
+        if let Some(ref mut r) = row {
+            self.hydrate_attachments(std::slice::from_mut(r))?;
+        }
+        Ok(row)
     }
 
     pub fn mark_read(&self, msg_key: &str) -> Result<()> {
@@ -454,7 +584,33 @@ fn map_stored(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
         read_at: row.get::<_, Option<i64>>(12)?.map(|v| v as u64),
         status: row.get(13)?,
         attempts: row.get::<_, i64>(14)? as u64,
+        attachments: Vec::new(),
     })
+}
+
+/// Persist a message's attachments, decoding base64 payloads to blobs.
+/// Verifies the declared size matches the decoded length.
+fn store_attachments(conn: &Connection, msg_key: &str, attachments: &[Attachment]) -> Result<()> {
+    use base64::Engine;
+    for (ord, a) in attachments.iter().enumerate() {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&a.data_base64)
+            .context("attachment payload is not valid base64")?;
+        if bytes.len() as u64 != a.size {
+            bail!(
+                "attachment `{}` declares {} bytes but decodes to {}",
+                a.name,
+                a.size,
+                bytes.len()
+            );
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO attachments
+             (msg_key, ord, name, content_type, size, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![msg_key, ord as i64, a.name, a.content_type, a.size as i64, bytes],
+        )?;
+    }
+    Ok(())
 }
 
 /// Mail bodies are plaintext and sensitive; keep the store files readable
@@ -490,7 +646,7 @@ mod tests {
     }
 
     fn sample_msg(id: &str, from: &str, to: &str) -> crate::proto::Message {
-        crate::proto::Message {
+        let msg = crate::proto::Message {
             id: id.to_string(),
             thread_id: "t1".to_string(),
             in_reply_to: None,
@@ -499,7 +655,9 @@ mod tests {
             created_at: now_secs(),
             content_type: "text/plain".to_string(),
             body: "hello".to_string(),
-        }
+            attachments: Vec::new(),
+        };
+        msg
     }
 
     #[test]
@@ -511,12 +669,25 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    fn outgoing_msg(to: &str) -> crate::proto::Message {
+        crate::proto::Message {
+            id: ulid::Ulid::generate().to_string(),
+            thread_id: "t1".to_string(),
+            in_reply_to: None,
+            from: "me".to_string(),
+            to: to.to_string(),
+            created_at: now_secs(),
+            content_type: "text/plain".to_string(),
+            body: "hi".to_string(),
+            attachments: Vec::new(),
+        }
+    }
+
     #[test]
     fn enqueue_schedules_first_retry_and_hides_from_due() {
         let (store, dir) = tmp_store();
-        let msg = store
-            .enqueue_outgoing("me", "peer", "t1", None, "text/plain", "hi", 600)
-            .unwrap();
+        let msg = outgoing_msg("peer");
+        store.enqueue_outgoing(&msg, 600).unwrap();
         // Not due immediately: the interactive send owns the first attempt.
         assert!(store.due_outgoing(50).unwrap().is_empty());
         assert_eq!(store.outbox_counts(), (1, 0));
@@ -530,9 +701,8 @@ mod tests {
     #[test]
     fn zero_first_retry_is_due_at_once() {
         let (store, dir) = tmp_store();
-        store
-            .enqueue_outgoing("me", "peer", "t1", None, "text/plain", "hi", 0)
-            .unwrap();
+        let msg = outgoing_msg("peer");
+        store.enqueue_outgoing(&msg, 0).unwrap();
         assert_eq!(store.due_outgoing(50).unwrap().len(), 1);
         std::fs::remove_dir_all(dir).ok();
     }
@@ -540,9 +710,8 @@ mod tests {
     #[test]
     fn retries_back_off_then_fail_visibly_at_max_attempts() {
         let (store, dir) = tmp_store();
-        let msg = store
-            .enqueue_outgoing("me", "peer", "t1", None, "text/plain", "hi", 0)
-            .unwrap();
+        let msg = outgoing_msg("peer");
+        store.enqueue_outgoing(&msg, 0).unwrap();
         for attempts in 1..MAX_ATTEMPTS {
             store.mark_retry(&msg.id, attempts, 30, 900).unwrap();
             assert_eq!(store.get(&msg.id).unwrap().unwrap().status, "queued");
@@ -561,14 +730,47 @@ mod tests {
     #[test]
     fn loopback_writes_in_copy() {
         let (store, dir) = tmp_store();
-        let msg = store
-            .enqueue_outgoing("me", "me", "t1", None, "text/plain", "note", 0)
-            .unwrap();
+        let mut msg = outgoing_msg("me");
+        msg.body = "note".to_string();
+        store.enqueue_outgoing(&msg, 0).unwrap();
         assert!(store.record_incoming(&msg).unwrap());
         store.mark_delivered(&msg.id, now_secs()).unwrap();
         let inbox = store.list_inbox(None).unwrap();
         assert_eq!(inbox.len(), 1);
         assert_eq!(inbox[0].body, "note");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn attachments_round_trip_with_payload() {
+        use base64::Engine;
+        let (store, dir) = tmp_store();
+        let mut msg = outgoing_msg("peer");
+        let payload = b"binary\x00payload".to_vec();
+        msg.attachments.push(crate::proto::Attachment {
+            name: "data.bin".to_string(),
+            content_type: "application/octet-stream".to_string(),
+            size: payload.len() as u64,
+            data_base64: base64::engine::general_purpose::STANDARD.encode(&payload),
+        });
+        store.enqueue_outgoing(&msg, 0).unwrap();
+
+        // Due-queue rebuild carries the attachment (for the wire).
+        let due = store.due_outgoing(50).unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].message.attachments.len(), 1);
+        assert_eq!(due[0].message.attachments[0].name, "data.bin");
+
+        // Inbound copy persists the blob; metadata hydrates listings.
+        assert!(store.record_incoming(&msg).unwrap());
+        let inbox = store.list_inbox(None).unwrap();
+        assert_eq!(inbox[0].attachments.len(), 1);
+        assert_eq!(inbox[0].attachments[0].size, payload.len() as u64);
+        let full = store.read_attachment(&inbox[0].msg_key, 0).unwrap().unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&full.data_base64)
+            .unwrap();
+        assert_eq!(decoded, payload);
         std::fs::remove_dir_all(dir).ok();
     }
 

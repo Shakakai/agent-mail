@@ -12,7 +12,7 @@ automatically.
 ## Status
 
 **All milestones M2–M5 implemented and verified** (Rust, iroh 1.3):
-identity, allowlist (inbound + outbound gating), `agent-mail/2` protocol
+identity, allowlist (inbound + outbound gating), `agent-mail/3` protocol
 (hello/send/ack/error), SQLite inbox/outbox with at-least-once delivery and
 daemon retry, CLI, stdio MCP server + agent skill, and the ratatui TUI. M6 (extensions: mailbox capability, attachments, multi-device)
 remains future work.
@@ -67,7 +67,7 @@ The transport pieces we use directly:
 | IROH concept | What we use it for |
 |---|---|
 | `Endpoint` | One long-lived node per agent (holds identity + all connections) |
-| ALPN | Protocol multiplexing — `agent-mail/2` for mail |
+| ALPN | Protocol multiplexing — `agent-mail/3` for mail |
 | QUIC streams | One bidirectional stream per mail exchange |
 | Discovery (n0 DNS / pkarr) | Resolving a NodeId to current dialing info |
 | Relays | Connectivity when both peers are behind NAT; hole-punch assist |
@@ -77,7 +77,7 @@ The transport pieces we use directly:
 ## Architecture at a glance
 
 ```
-┌──────────────┐   QUIC + agent-mail/2   ┌──────────────┐
+┌──────────────┐   QUIC + agent-mail/3   ┌──────────────┐
 │   Agent A    │ ◄─────────────────────► │   Agent B    │
 │  (this tool) │   direct, or via relay  │  (this tool) │
 └──────┬───────┘                         └──────┬───────┘
@@ -157,7 +157,7 @@ human = true
 
 ---
 
-## The agent-mail protocol (v2)
+## The agent-mail protocol (v3)
 
 A small, strict protocol on top of IROH's raw QUIC API. Design goals:
 debuggable by a human with `agent-mail debug`, forward-evolvable, and strict
@@ -165,8 +165,9 @@ about identity.
 
 ### Transport
 
-- **ALPN:** `agent-mail/2` (versioned; incompatible changes bump the version).
-  v1 nodes — which carried an `audience` field — are not interoperable.
+- **ALPN:** `agent-mail/3` (versioned; incompatible changes bump the version).
+  v1 carried an `audience` field (removed in v2); v2 dropped attachments
+  (added in v3, base64 inline, 20 MiB per attachment).
 - **Connections:** one QUIC connection per peer pair, kept open while the
   daemon runs. Dial-on-demand; the accepting side uses IROH's `Router` with a
   protocol handler for the ALPN.
@@ -236,7 +237,11 @@ dial first, e.g. after a NAT event):
     "to": "<recipient-node-id-z32>",
     "created_at": 1727740800,
     "content_type": "text/plain",
-    "body": "Found the bug. Fix is on branch fix/parser-crash."
+    "body": "Found the bug. Fix is on branch fix/parser-crash.",
+    "attachments": [
+      { "name": "crash.log", "content_type": "text/plain",
+        "size": 4210, "data_base64": "…" }
+    ]
   } }
 ```
 
@@ -304,8 +309,8 @@ agent-mail read <msg-id> [--json]
 agent-mail reply <msg-id> [-m body] [--stdin]
 
 agent-mail daemon                  # run the mail daemon (foreground)
-agent-mail daemon install          # launchd / systemd service (planned)
-agent-mail mcp                     # serve MCP over stdio (for agents, M4)
+agent-mail mcp                     # serve MCP over stdio (for agents)
+agent-mail tui                     # human mail client
 agent-mail tui                     # human mail client (M5)
 agent-mail addr [--json]           # print my full address ticket (for --ticket)
 agent-mail debug dump <frame...>   # decode raw frames (planned)

@@ -141,8 +141,8 @@ def main():
         names = sorted(t["name"] for t in tools["tools"])
         print("tools:", names)
         assert names == ["allow_add", "allow_list", "get_identity", "list_inbox",
-                         "list_outbox", "list_threads", "read_message", "reply",
-                         "send_message"], names
+                         "list_outbox", "list_threads", "read_attachment", "read_message",
+                         "reply", "send_message"], names
 
         # Give both embedded daemons a moment to come online and publish
         # discovery records; n0's free tier is rate-limited and flaky.
@@ -168,6 +168,32 @@ def main():
         msg = b.call("read_message", {"msg_key": key})
         assert msg["read_at"] is not None, "read_message should mark read"
         print("B read ok, marked read")
+
+        # attachments: A sends a file, B reads metadata + payload back
+        payload_path = f"{base}/payload.bin"
+        payload_bytes = b"agent-mail attachment payload\x00\x01\x02" * 16
+        with open(payload_path, "wb") as f:
+            f.write(payload_bytes)
+        sent_att = a.call("send_message", {"peer": "agent-b", "body": "report attached",
+                                           "attachments": [payload_path]})
+        assert sent_att["status"] in ("delivered", "queued"), sent_att
+        deadline = time.time() + 90
+        att_msg = None
+        while time.time() < deadline:
+            time.sleep(3)
+            for m in b.call("list_inbox", {"peer": "agent-a"}):
+                if m["body"] == "report attached":
+                    att_msg = m
+                    break
+            if att_msg:
+                break
+        assert att_msg and len(att_msg["attachments"]) == 1, att_msg
+        meta = att_msg["attachments"][0]
+        assert meta["name"] == "payload.bin" and meta["size"] == len(payload_bytes), meta
+        att = b.call("read_attachment", {"msg_key": att_msg["msg_key"], "index": 0})
+        import base64 as b64
+        assert b64.b64decode(att["data_base64"]) == payload_bytes, "attachment payload mismatch"
+        print("attachment round trip ok:", meta["name"], meta["size"], "bytes")
 
         replied = b.call("reply", {"msg_key": key, "body": "ack over MCP"})
         print("B reply:", replied["status"], "(daemon will retry if queued)")

@@ -14,8 +14,10 @@
     <a class="brand" href="index.html">agent<span>-</span>mail</a>
     <a class="navlink" href="index.html">Why</a>
     <a class="navlink" href="quickstart.html">Quickstart</a>
+    <a class="navlink" href="patterns.html">Patterns</a>
     <a class="navlink active" href="production.html">Production</a>
-    <a class="navlink" href="integrations.html">Agent harnesses</a>
+    <a class="navlink" href="integrations.html">Harnesses</a>
+    <a class="navlink" href="iroh.html">IROH</a>
     <a class="navlink" href="protocol.html">Protocol</a>
     <a class="navlink" href="reference.html">Reference</a>
     <a class="navlink" href="downloads.html">Download</a>
@@ -168,25 +170,21 @@ mcp_allow_trust_changes = false</code></pre>
   <p>Changes take effect on process start; the allowlist itself is re-read per connection,
     so trust edits apply immediately without a restart.</p>
 
-  <h2 id="discovery">Discovery in production</h2>
+  <h2 id="discovery">Discovery &amp; relays in production</h2>
   <p>
-    By default, endpoints publish their addressing info to n0's free public discovery
-    (<code>dns.iroh.link</code>). It is rate-limited and has no uptime guarantee — fine for
-    development, occasionally flaky for production. Options, in order of robustness:
+    All of the networking — discovery, relays, NAT traversal — is IROH, and it's collected
+    on one page so this one doesn't have to re-explain it:
+    <strong><a href="iroh.html">How IROH moves the bytes</a></strong>. The short version:
+    you run no servers; n0's free relays and discovery bootstrap connectivity, with
+    self-hosting options (or out-of-band address tickets) when you need more control.
   </p>
-  <ol>
-    <li><strong>Explicit tickets on trusted networks.</strong> Exchange addresses out-of-band:
-      <pre><code># recipient:
-agent-mail addr &gt; ticket.json        # or: agent-mail addr --json
-# sender:
-agent-mail send bob --ticket "$(cat ticket.json)" -m "…"</code></pre>
-      Tickets bypass discovery entirely — ideal for LANs, VPCs, and CI.</li>
-    <li><strong>Self-host iroh-dns-server.</strong> Run your own discovery/relay
-      (see the <a href="https://iroh.computer">IROH docs</a>) and configure the endpoint
-      preset accordingly. Recommended once you have more than a handful of peers.</li>
-    <li><strong>Accept the flakiness.</strong> The outbox retries hide most of it; keep an
-      eye on <code>failed</code> counts (below).</li>
-  </ol>
+
+  <div class="callout tip">
+    <p class="label">Scale</p>
+    <p>Tens of agents is the comfortable zone today. If you're thinking hundreds or
+      thousands, the discovery/relay layer can be tuned for it —
+      <a href="https://github.com/Shakakai">reach out</a>.</p>
+  </div>
 
   <h2 id="hardening">Hardening checklist</h2>
   <ul>

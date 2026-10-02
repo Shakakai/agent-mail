@@ -40,6 +40,9 @@ pub struct SendParams {
     pub peer: String,
     /// Message body (plain text).
     pub body: String,
+    /// Optional file paths to attach (each ≤ 20 MiB; repeatable list).
+    #[serde(default)]
+    pub attachments: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -64,6 +67,14 @@ pub struct ReplyParams {
     pub msg_key: String,
     /// Reply body (plain text).
     pub body: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadAttachmentParams {
+    /// Message key (from list_inbox).
+    pub msg_key: String,
+    /// Attachment index (0-based, from the message's attachments list).
+    pub index: usize,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -181,6 +192,13 @@ impl MailMcp {
             return Err(Self::bad_request("message body is empty"));
         }
         let peer_id = self.resolve_peer(&p.peer)?;
+        let mut attachments = Vec::new();
+        for path in p.attachments.as_deref().unwrap_or(&[]) {
+            attachments.push(
+                ops::attachment_from_file(std::path::Path::new(path))
+                    .map_err(|e| Self::bad_request(format!("{e:#}")))?,
+            );
+        }
         let outcome = ops::send_message(
             &self.paths,
             &self.config,
@@ -188,6 +206,7 @@ impl MailMcp {
             &self.me,
             &peer_id,
             &p.body,
+            attachments,
             None,
             None,
         )
@@ -231,12 +250,23 @@ impl MailMcp {
             &self.me,
             &peer_id,
             &p.body,
+            Vec::new(),
             Some(&thread_id),
             Some(&reply_to),
         )
         .await
         .map_err(|e| Self::internal(format!("{e:#}")))?;
         Ok(Self::json(&outcome))
+    }
+
+    #[tool(description = "Fetch an attachment of a received message by index. Returns the attachment metadata plus its payload as base64 (decode and write to disk to use it).")]
+    fn read_attachment(&self, Parameters(p): Parameters<ReadAttachmentParams>) -> std::result::Result<String, ErrorData> {
+        let store = Store::open(&self.paths).map_err(|e| Self::internal(format!("{e:#}")))?;
+        let att = store
+            .read_attachment(&p.msg_key, p.index)
+            .map_err(|e| Self::internal(format!("{e:#}")))?
+            .ok_or_else(|| Self::bad_request(format!("no attachment {} on message `{}`", p.index, p.msg_key)))?;
+        Ok(Self::json(&att))
     }
 
     #[tool(description = "Conversation overview: one entry per thread with the latest message preview, message count, and unread count.")]

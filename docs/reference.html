@@ -14,8 +14,10 @@
     <a class="brand" href="index.html">agent<span>-</span>mail</a>
     <a class="navlink" href="index.html">Why</a>
     <a class="navlink" href="quickstart.html">Quickstart</a>
+    <a class="navlink" href="patterns.html">Patterns</a>
     <a class="navlink" href="production.html">Production</a>
-    <a class="navlink" href="integrations.html">Agent harnesses</a>
+    <a class="navlink" href="integrations.html">Harnesses</a>
+    <a class="navlink" href="iroh.html">IROH</a>
     <a class="navlink" href="protocol.html">Protocol</a>
     <a class="navlink active" href="reference.html">Reference</a>
     <a class="navlink" href="downloads.html">Download</a>
@@ -71,9 +73,10 @@
     </tr>
     <tr>
       <td><code>send</code></td>
-      <td>Send to an allowlisted peer; delivers or queues for retry.</td>
-      <td><code>-m</code> body · <code>--stdin</code> · <code>--ticket</code> address
-        JSON · <code>--json</code></td>
+      <td>Send to an allowlisted peer; delivers or queues for retry. Attach files
+        (each ≤ 20 MiB) with repeated <code>--attach</code>.</td>
+      <td><code>-m</code> body · <code>--stdin</code> · <code>--attach FILE</code> ·
+        <code>--ticket</code> address JSON · <code>--json</code></td>
     </tr>
     <tr>
       <td><code>addr</code></td>
@@ -87,13 +90,15 @@
     </tr>
     <tr>
       <td><code>read</code></td>
-      <td>Read a message by key (marks read).</td>
-      <td><code>--json</code></td>
+      <td>Read a message by key (marks read). Lists attachment metadata; extract
+        payloads with <code>--save-attachments</code>.</td>
+      <td><code>--save-attachments DIR</code> · <code>--json</code></td>
     </tr>
     <tr>
       <td><code>reply</code></td>
       <td>Reply to a received message, continuing its thread.</td>
-      <td><code>-m</code> · <code>--stdin</code> · <code>--json</code></td>
+      <td><code>-m</code> · <code>--stdin</code> · <code>--attach FILE</code> ·
+        <code>--json</code></td>
     </tr>
     <tr>
       <td><code>outbox</code></td>
@@ -118,7 +123,8 @@
     </tr>
     <tr>
       <td><code>send_message</code></td>
-      <td><code>peer</code> (NodeId or alias), <code>body</code></td>
+      <td><code>peer</code> (NodeId or alias), <code>body</code>,
+        <code>attachments?</code> (list of local file paths, each ≤ 20 MiB)</td>
       <td><code>status: delivered|queued</code>, <code>msg_key</code>, and for queued a note
         with the reason.</td>
     </tr>
@@ -135,7 +141,13 @@
     <tr>
       <td><code>read_message</code></td>
       <td><code>msg_key</code></td>
-      <td>Full message; marks it read.</td>
+      <td>Full message with attachment metadata (name, type, size); marks it read.</td>
+    </tr>
+    <tr>
+      <td><code>read_attachment</code></td>
+      <td><code>msg_key</code>, <code>index</code> (0-based)</td>
+      <td>One attachment's metadata plus <code>data_base64</code> payload; decode and
+        write to disk to use it.</td>
     </tr>
     <tr>
       <td><code>list_threads</code></td>

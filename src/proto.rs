@@ -1,4 +1,4 @@
-//! The `agent-mail/2` wire protocol: length-prefixed JSON frames on IROH
+//! The `agent-mail/3` wire protocol: length-prefixed JSON frames on IROH
 //! QUIC streams. One bidirectional stream per exchange: the initiator writes
 //! exactly one frame, half-closes, and reads exactly one response frame.
 
@@ -8,15 +8,33 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::util::now_secs;
 
-pub const ALPN: &[u8] = b"agent-mail/2";
-pub const PROTOCOL_V: u8 = 2;
+pub const ALPN: &[u8] = b"agent-mail/3";
+pub const PROTOCOL_V: u8 = 3;
 pub const CAP_MAIL: &str = "mail";
+pub const CAP_ATTACHMENTS: &str = "attachments";
 pub const MAX_FRAME_BYTES: usize = 1 << 20;
+/// Hard cap on any single wire frame (a `send` carrying attachments).
+/// 64 MiB comfortably covers the 1 MiB default body plus several
+/// 20 MiB attachments in base64.
+pub const MAX_WIRE_BYTES: usize = 64 << 20;
+/// Maximum size of one attachment, raw (before base64), over the wire.
+pub const MAX_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInfo {
     pub name: String,
     pub version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    pub name: String,
+    pub content_type: String,
+    /// Raw (pre-base64) byte size of the payload.
+    pub size: u64,
+    /// Payload, base64-encoded. Empty in metadata-only contexts.
+    #[serde(default)]
+    pub data_base64: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +47,8 @@ pub struct Message {
     pub created_at: u64,
     pub content_type: String,
     pub body: String,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,7 +105,7 @@ impl Frame {
                     name: "agent-mail".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
                 },
-                caps: vec![CAP_MAIL.to_string()],
+                caps: vec![CAP_MAIL.to_string(), CAP_ATTACHMENTS.to_string()],
                 since: now_secs(),
             },
         }

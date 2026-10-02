@@ -182,6 +182,7 @@ impl App {
                 &self.me,
                 &peer_id,
                 &c.body,
+                Vec::new(),
                 thread.as_deref(),
                 reply_to.as_deref(),
             )

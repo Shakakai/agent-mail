@@ -52,7 +52,10 @@ impl ProtocolHandler for MailHandler {
                 Ok(streams) => streams,
                 Err(_) => break, // connection closed
             };
-            let frame = match read_frame(&mut recv, self.config.max_message_bytes).await {
+            // Frames carrying attachments may be much larger than the body
+            // limit; the frame cap is a hard transport bound, and the
+            // semantic size checks happen in handle_message.
+            let frame = match read_frame(&mut recv, proto::MAX_WIRE_BYTES).await {
                 Ok(f) => f,
                 Err(e) => {
                     warn!(%remote, "bad frame: {e:#}");
@@ -67,7 +70,7 @@ impl ProtocolHandler for MailHandler {
             };
             let response = match frame.body {
                 FrameBody::Hello { .. } => Frame::hello(),
-                FrameBody::Send { msg, .. } => match handle_message(&store, &me, &remote, msg) {
+                FrameBody::Send { msg, .. } => match handle_message(&store, &self.config, &me, &remote, msg) {
                     Ok(received_at) => Frame {
                         v: proto::PROTOCOL_V,
                         body: FrameBody::Ack {
@@ -93,6 +96,7 @@ impl ProtocolHandler for MailHandler {
 /// for the ack, or an (error code, message) pair.
 fn handle_message(
     store: &Store,
+    config: &Config,
     me: &str,
     remote: &iroh::EndpointId,
     msg: Message,
@@ -109,6 +113,29 @@ fn handle_message(
             ErrorCode::IdentityMismatch,
             format!("to ({}) is not this endpoint", msg.to),
         ));
+    }
+    if msg.body.len() > config.max_message_bytes {
+        return Err((
+            ErrorCode::TooLarge,
+            format!(
+                "body is {} bytes, limit is {}",
+                msg.body.len(),
+                config.max_message_bytes
+            ),
+        ));
+    }
+    for a in &msg.attachments {
+        if a.size > proto::MAX_ATTACHMENT_BYTES {
+            return Err((
+                ErrorCode::TooLarge,
+                format!(
+                    "attachment `{}` is {} bytes, limit is {}",
+                    a.name,
+                    a.size,
+                    proto::MAX_ATTACHMENT_BYTES
+                ),
+            ));
+        }
     }
     match store.record_incoming(&msg) {
         Ok(inserted) => {

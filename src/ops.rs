@@ -3,9 +3,11 @@
 
 use anyhow::{Context, Result, bail};
 use iroh::{Endpoint, SecretKey, endpoint::presets};
+use std::path::Path;
 
 use crate::client;
 use crate::config::{Config, Paths};
+use crate::proto::{Attachment, Message, MAX_ATTACHMENT_BYTES, MAX_WIRE_BYTES};
 use crate::store::{Store, StoredMessage, ThreadSummary};
 
 #[derive(Debug, serde::Serialize)]
@@ -32,29 +34,26 @@ pub async fn send_message(
     me: &str,
     peer_id: &str,
     body: &str,
+    attachments: Vec<Attachment>,
     thread_id: Option<&str>,
     in_reply_to: Option<&str>,
 ) -> Result<DeliveryOutcome> {
     let store = Store::open(paths)?;
-    if body.len() > config.max_message_bytes {
-        bail!(
-            "message body is {} bytes, exceeds the {}-byte limit",
-            body.len(),
-            config.max_message_bytes
-        );
-    }
-    let thread_id = thread_id
-        .map(|t| t.to_string())
-        .unwrap_or_else(|| ulid::Ulid::generate().to_string());
-    let msg = store.enqueue_outgoing(
-        me,
-        peer_id,
-        &thread_id,
-        in_reply_to,
-        "text/plain",
-        body,
-        config.retry_base_secs,
-    )?;
+    let msg = Message {
+        id: ulid::Ulid::generate().to_string(),
+        thread_id: thread_id
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| ulid::Ulid::generate().to_string()),
+        in_reply_to: in_reply_to.map(|s| s.to_string()),
+        from: me.to_string(),
+        to: peer_id.to_string(),
+        created_at: crate::util::now_secs(),
+        content_type: "text/plain".to_string(),
+        body: body.to_string(),
+        attachments,
+    };
+    validate_message(config, &msg)?;
+    store.enqueue_outgoing(&msg, config.retry_base_secs)?;
 
     let result = if peer_id == me {
         // Loopback: iroh does not support dialing our own NodeId, so a
@@ -95,6 +94,73 @@ pub async fn send_message(
             })
         }
     }
+}
+
+/// Validate a message against the configured body limit and the wire
+/// limits (per-attachment 20 MiB, total frame 64 MiB). Shared by the CLI
+/// and the MCP server before anything reaches the outbox.
+pub fn validate_message(config: &Config, msg: &Message) -> Result<()> {
+    if msg.body.len() > config.max_message_bytes {
+        bail!(
+            "message body is {} bytes, exceeds the {}-byte limit",
+            msg.body.len(),
+            config.max_message_bytes
+        );
+    }
+    for a in &msg.attachments {
+        if a.size > MAX_ATTACHMENT_BYTES {
+            bail!(
+                "attachment `{}` is {} bytes, exceeds the {}-byte limit",
+                a.name,
+                a.size,
+                MAX_ATTACHMENT_BYTES
+            );
+        }
+    }
+    let wire_estimate = msg.body.len() as u64
+        + msg
+            .attachments
+            .iter()
+            .map(|a| a.data_base64.len() as u64)
+            .sum::<u64>()
+        + 4096;
+    if wire_estimate > MAX_WIRE_BYTES as u64 {
+        bail!(
+            "message with attachments is ~{} bytes on the wire, exceeds the {}-byte frame limit",
+            wire_estimate,
+            MAX_WIRE_BYTES
+        );
+    }
+    Ok(())
+}
+
+/// Build an attachment from a file on disk: payload base64-encoded,
+/// name from the file name, content type inferred from a few common
+/// extensions (default <code>application/octet-stream</code>).
+pub fn attachment_from_file(path: &Path) -> Result<Attachment> {
+    use base64::Engine;
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("reading attachment {}", path.display()))?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "attachment".to_string());
+    let content_type = match path.extension().map(|e| e.to_string_lossy().to_lowercase()) {
+        Some(ref e) if e == "json" => "application/json",
+        Some(ref e) if e == "txt" || e == "log" || e == "md" => "text/plain",
+        Some(ref e) if e == "png" => "image/png",
+        Some(ref e) if e == "jpg" || e == "jpeg" => "image/jpeg",
+        Some(ref e) if e == "pdf" => "application/pdf",
+        Some(ref e) if e == "zip" => "application/zip",
+        _ => "application/octet-stream",
+    }
+    .to_string();
+    Ok(Attachment {
+        name,
+        content_type,
+        size: bytes.len() as u64,
+        data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
 }
 
 pub fn list_inbox(

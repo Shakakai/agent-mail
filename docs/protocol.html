@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Protocol &amp; security — agent-mail</title>
-<meta name="description" content="The agent-mail/2 wire protocol, delivery semantics, and the security model: identity, trust, and what the transport guarantees.">
+<title>The agent-mail/3 protocol — implementor's spec</title>
+<meta name="description" content="The normative agent-mail/3 wire specification: framing, frames, limits, handshake, trust requirements, and a conformance checklist for implementors.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,8 +14,10 @@
     <a class="brand" href="index.html">agent<span>-</span>mail</a>
     <a class="navlink" href="index.html">Why</a>
     <a class="navlink" href="quickstart.html">Quickstart</a>
+    <a class="navlink" href="patterns.html">Patterns</a>
     <a class="navlink" href="production.html">Production</a>
-    <a class="navlink" href="integrations.html">Agent harnesses</a>
+    <a class="navlink" href="integrations.html">Harnesses</a>
+    <a class="navlink" href="iroh.html">IROH</a>
     <a class="navlink active" href="protocol.html">Protocol</a>
     <a class="navlink" href="reference.html">Reference</a>
     <a class="navlink" href="downloads.html">Download</a>
@@ -23,134 +25,204 @@
 </nav>
 
 <main>
-  <h1 class="page">Protocol &amp; security model</h1>
+  <h1 class="page">The agent-mail/3 protocol</h1>
   <p class="subtitle">
-    agent-mail/2: length-prefixed JSON frames over IROH QUIC streams. Simple enough to
-    reimplement, strict enough to trust.
+    A normative specification: implement it and your software can exchange mail with every
+    node running the reference binary — and with every other implementation.
   </p>
 
-  <h2 id="transport">Transport guarantees</h2>
-  <p>Everything rides on <a href="https://iroh.computer">IROH</a>:</p>
+  <div class="callout warn">
+    <p class="label">Pre-1.0</p>
+    <p>The protocol is versioned and evolving. Incompatible changes bump the version
+      (ALPN and <code>v</code> field); nodes of different major versions refuse the
+      connection at handshake rather than misbehaving. New capabilities arrive through
+      <code>caps</code> negotiation, not schema breakage. Track
+      <a href="https://github.com/Shakakai/agent-mail">the repository</a> for changes.</p>
+  </div>
+
+  <p>
+    <strong>Framework authors:</strong> if you maintain an agent harness, giving your users
+    mail is: speak this protocol over an IROH endpoint, expose send/read/reply to the
+    model, and ship a skill with the workflow rules. The conformance checklist at the
+    bottom is your definition of done. Questions or proposed extensions — open an issue.
+  </p>
+
+  <h2 id="transport">1. Transport</h2>
   <ul>
-    <li><strong>Authentication</strong> — the peer's ed25519 public key (NodeId) is verified
-      by the QUIC/TLS handshake. There are no certificates and no unauthenticated
-      connections: the NodeId you dial is exactly the key that answers.</li>
-    <li><strong>Encryption</strong> — all traffic is end-to-end encrypted to the recipient's
-      key.</li>
-    <li><strong>NAT traversal</strong> — direct paths via hole punching, relay fallback when
-      they fail. No inbound ports required.</li>
+    <li><strong>ALPN:</strong> <code>agent-mail/3</code>. Endpoints that don't share a
+      version MUST NOT proceed (the QUIC handshake itself rejects unknown ALPNs).</li>
+    <li><strong>Endpoint identity:</strong> an ed25519 keypair; the public key (NodeId,
+      displayed as hex) is the peer's only address. Bind the IROH endpoint with the
+      persistent secret key — an ephemeral key breaks discovery and authentication.</li>
+    <li><strong>Connections:</strong> dial-on-demand is fine; the accepting side registers
+      a protocol handler for the ALPN on an IROH <code>Router</code>.</li>
+    <li><strong>Streams:</strong> one bidirectional QUIC stream per exchange. The initiator
+      writes exactly one frame, half-closes (<code>finish()</code> — this is required), and
+      reads exactly one response frame.</li>
   </ul>
 
-  <h2 id="framing">Framing</h2>
-  <pre><code>u32 little-endian length N  (N ≤ 1 MiB by default)
-N bytes of JSON: {"v": 1, "type": &lt;frame&gt;, ...}</code></pre>
-  <p>One bidirectional stream per exchange: the initiator writes exactly one frame,
-    half-closes, and reads exactly one response frame. Receivers enforce the frame-size
-    limit before allocating; unknown protocol versions and malformed JSON are rejected
-    with an <code>error</code> frame.</p>
-
-  <h2 id="frames">Frames</h2>
+  <h2 id="framing">2. Framing</h2>
+  <pre><code>frame        = u32le(length) payload
+payload      = JSON serialized Frame (UTF-8)
+length       = byte length of payload; MUST be ≤ the applicable cap below</code></pre>
   <table>
-    <tr><th>Frame</th><th>Fields</th><th>Meaning</th></tr>
+    <tr><th>Cap</th><th>Value</th><th>Applies to</th></tr>
+    <tr><td>Frame cap (control)</td><td>1 MiB (2<sup>20</sup>)</td><td><code>hello</code>, <code>ack</code>, <code>error</code>, and <code>send</code> frames without attachments</td></tr>
+    <tr><td>Frame cap (wire)</td><td>64 MiB</td><td>any <code>send</code> frame</td></tr>
+    <tr><td>Body limit</td><td>1 MiB default (configurable per node)</td><td><code>msg.body</code></td></tr>
+    <tr><td>Attachment limit</td><td>20 MiB raw, per attachment</td><td>each <code>msg.attachments[]</code></td></tr>
+  </table>
+  <p>
+    Receivers MUST enforce the frame cap <em>before</em> allocating the payload, reject
+    unknown <code>v</code> values, and reject malformed JSON with an <code>error</code>
+    frame (code <code>malformed</code>). Semantic limits (body, attachments) are enforced
+    on the parsed message, not the raw frame.
+  </p>
+
+  <h2 id="frames">3. Frames</h2>
+  <p>Every frame is a JSON object with <code>v</code> (protocol version, MUST be
+    <code>3</code>) and <code>type</code>:</p>
+  <pre><code>Frame  = { "v": 3, "type": "hello", ... }
+       | { "v": 3, "type": "send",  ... }
+       | { "v": 3, "type": "ack",   ... }
+       | { "v": 3, "type": "error", ... }</code></pre>
+
+  <h3>3.1 <code>hello</code></h3>
+  <pre><code>{ "v": 3, "type": "hello",
+  "id":     "&lt;frame-ulid&gt;",
+  "agent":  { "name": "agent-mail", "version": "&lt;semver&gt;" },
+  "caps":   ["mail", "attachments"],
+  "since":  &lt;unix-secs&gt; }</code></pre>
+  <p>Sent by the dialer at the start of a connection; the receiver replies with its own
+    <code>hello</code>. <code>caps</code> declares optional features; <code>attachments</code>
+    means the node accepts attachment payloads in <code>send</code> frames.</p>
+
+  <h3>3.2 <code>send</code></h3>
+  <pre><code>{ "v": 3, "type": "send",
+  "id":  "&lt;frame-ulid&gt;",
+  "msg": {
+    "id":           "&lt;msg-ulid&gt;",        // globally unique per sender
+    "thread_id":    "&lt;ulid&gt;",             // conversation id (ULID)
+    "in_reply_to":  "&lt;msg-ulid&gt; | null", // the referenced message's *sender-side* id
+    "from":         "&lt;node-id-hex&gt;",
+    "to":           "&lt;node-id-hex&gt;",
+    "created_at":   1727740800,
+    "content_type": "text/plain",
+    "body":         "…",
+    "attachments":  [ Attachment, ... ]   // optional; default []
+  } }
+
+Attachment = {
+  "name":         "report.csv",
+  "content_type": "text/csv",
+  "size":         12345,                // RAW byte count (pre-base64)
+  "data_base64":  "&lt;base64&gt;"            // empty in metadata-only contexts
+}</code></pre>
+  <ul>
+    <li><code>msg.id</code> is chosen by the sender and MUST be unique per sender; it is
+      the dedupe key and the value peers reference in <code>in_reply_to</code>. The
+      reference implementation uses the sender's outbox key as <code>msg.id</code>.</li>
+    <li><code>in_reply_to</code> references the <em>sender-side</em> id of the message being
+      answered (from its envelope), not any local row key.</li>
+    <li>Attachments travel inline in the frame, base64-encoded; <code>size</code> is the
+      decoded length and MUST equal it. Implementations MAY decline large attachments by
+      answering <code>error { code: "too_large" }</code>.</li>
+  </ul>
+
+  <h3>3.3 <code>ack</code> / <code>error</code> — exactly one response per <code>send</code></h3>
+  <pre><code>{ "v": 3, "type": "ack", "id": "&lt;frame-ulid&gt;",
+  "of": "&lt;msg-id&gt;", "received_at": 1727740801 }
+
+{ "v": 3, "type": "error", "id": "&lt;frame-ulid&gt;", "of": "&lt;msg-id|null&gt;",
+  "code": "not_allowed | identity_mismatch | too_large | malformed | internal",
+  "message": "human-readable detail" }</code></pre>
+  <p>
+    <code>ack</code> means the message is durably stored in the recipient's inbox; senders
+    move their outbox copy to <code>delivered</code> and record <code>received_at</code>.
+    Duplicates (same sender, same <code>msg.id</code>) MUST also be acked, but only stored
+    once — delivery is at-least-once and inbox storage is exactly-once per message id.
+  </p>
+
+  <h2 id="trust">4. Trust requirements (normative)</h2>
+  <ol>
+    <li>Each node maintains an allowlist of peer NodeIds, applied to <strong>both</strong>
+      directions: inbound connections from unlisted keys are dropped before any envelope is
+      read, and outbound sends resolve peers through the same list.</li>
+    <li>The allowlist is re-read per connection; edits take effect without restart. File
+      updates SHOULD be atomic (write-temp-then-rename).</li>
+    <li>On receipt of a <code>send</code>, the receiver MUST verify
+      <code>msg.from == connection peer NodeId</code> and <code>msg.to == own NodeId</code>;
+      reject otherwise with <code>identity_mismatch</code>. An allowlisted peer must never
+      be able to forge mail from a third party.</li>
+    <li>Rejected inbound connections SHOULD be recorded (NodeId, time, count) for review —
+      the reference implementation surfaces these in its TUI.</li>
+  </ol>
+
+  <h2 id="delivery">5. Delivery semantics (normative)</h2>
+  <ol>
+    <li>Senders enqueue durably <em>before</em> attempting delivery, then try immediately.</li>
+    <li>On failure (no connection, handshake refused, timeout, <code>error</code> response),
+      the message stays queued; a background retry loop with exponential backoff
+      (reference: 30s base doubling, 15min cap) re-attempts while the peer is unreachable.</li>
+    <li>After a bounded number of attempts (reference: 10) the message is marked
+      <code>failed</code> and MUST remain visible to operators — silent loss is a protocol
+      violation in spirit.</li>
+    <li>Senders to their own NodeId use loopback storage (write directly to the local
+      inbox): IROH cannot dial itself.</li>
+    <li>Ordering is <em>not</em> guaranteed across messages; threads carry
+      <code>created_at</code> for display ordering. Build sequencing on top if you need it.</li>
+  </ol>
+
+  <h2 id="checklist">6. Conformance checklist</h2>
+  <p>An implementation is conformant when it:</p>
+  <ul>
+    <li>☐ Speaks ALPN <code>agent-mail/3</code> with <code>v: 3</code> frames and refuses
+      other versions cleanly.</li>
+    <li>☐ Enforces framing caps before allocating; rejects malformed frames with
+      <code>error/malformed</code>.</li>
+    <li>☐ Implements all four frame types and the one-request/one-response stream pattern
+      with explicit <code>finish()</code>.</li>
+    <li>☐ Enforces the trust requirements (§4) including the from/to identity checks.</li>
+    <li>☐ Dedupes inbound mail on (sender, <code>msg.id</code>) and acks duplicates.</li>
+    <li>☐ Persists the outbox and retries with backoff; surfaces exhausted messages as
+      failed, never silently.</li>
+    <li>☐ Advertises <code>attachments</code> in <code>caps</code> only if it implements
+      attachment storage and the 20 MiB per-attachment limit.</li>
+    <li>☐ Interops with the reference binary: <code>scripts/mcp_smoke.py</code> (or the
+      equivalent handshake) passes against it.</li>
+  </ul>
+
+  <h2 id="implementations">Implementations</h2>
+  <table>
+    <tr><th>Language</th><th>Status</th><th>Notes</th></tr>
     <tr>
-      <td><code>hello</code></td>
-      <td><code>id</code>, <code>agent{name,version}</code>, <code>caps[]</code>, <code>since</code></td>
-      <td>Capability announcement at the start of a connection.</td>
+      <td>Rust (reference)</td>
+      <td>✅ complete</td>
+      <td>This repository: daemon, MCP server, TUI, CLI; the conformance target.</td>
     </tr>
     <tr>
-      <td><code>send</code></td>
-      <td><code>id</code>, <code>msg</code></td>
-      <td>A message (below). The sender's msg <code>id</code> is its outbox key — peers
-        dedupe retries on it.</td>
+      <td>Python</td>
+      <td>wanted</td>
+      <td>Everything needed is on this page plus <a href="https://iroh.computer">iroh</a>
+        Python bindings. Tell us you're building it.</td>
     </tr>
     <tr>
-      <td><code>ack</code></td>
-      <td><code>id</code>, <code>of</code>, <code>received_at</code></td>
-      <td>Message stored in the recipient's inbox. Sent even for duplicates.</td>
+      <td>TypeScript</td>
+      <td>wanted</td>
+      <td>Great fit for harness plugins and web-adjacent tooling.</td>
     </tr>
     <tr>
-      <td><code>error</code></td>
-      <td><code>id</code>, <code>of?</code>, <code>code</code>, <code>message</code></td>
-      <td>Rejection: <code>not_allowed</code>, <code>identity_mismatch</code>,
-        <code>too_large</code>, <code>malformed</code>, <code>internal</code>.</td>
+      <td>Mobile (iOS/Android)</td>
+      <td>example opportunity</td>
+      <td>See the <a href="patterns.html#mobile">patterns page</a> — a phone with a
+        mailbox is just another peer.</td>
     </tr>
   </table>
-
-  <h3>The message object</h3>
-  <pre><code>{
-  "id":         "01H…",            // sender-chosen, unique per sender (ULID)
-  "thread_id":  "01H…",            // conversation id (ULID, sender-chosen)
-  "in_reply_to":"01H…" | null,     // the referenced message's *sender-side* id
-  "from":       "&lt;node-id&gt;",
-  "to":         "&lt;node-id&gt;",
-  "created_at": 1727740800,
-  "content_type":"text/plain",
-  "body":       "…"
-}</code></pre>
-  <p>On receipt, the daemon enforces: <code>from</code> must equal the connection's peer key,
-    <code>to</code> must equal this installation's key. Messages failing either check are
-    rejected with <code>identity_mismatch</code> — an allowlisted peer cannot forge mail
-    from a third party.</p>
-
-  <h2 id="trust">Trust model</h2>
-  <ul>
-    <li><strong>Allowlist, both directions.</strong> Inbound connections from NodeIds not in
-      <code>allowed-keys.toml</code> are dropped before any envelope is exchanged; the attempt
-      is recorded in the rejections table. Outbound sends resolve peers through the same
-      list, so a missing entry fails fast with a clear error.</li>
-    <li><strong>Live updates.</strong> The list is re-read per connection: adding or removing
-      a peer takes effect immediately, no daemon restart.</li>
-    <li><strong>Human-gated changes.</strong> MCP-exposed trust changes (<code>allow_add</code>)
-      are disabled unless <code>mcp_allow_trust_changes = true</code>.</li>
-    <li><strong>Self-send.</strong> A NodeId is implicitly trusted to send to itself via a
-      loopback path (iroh cannot dial its own NodeId): the message is written directly into
-      the local inbox. Same policy checks (size limits) still apply.</li>
-  </ul>
-
-  <h2 id="delivery">Delivery semantics</h2>
-  <ol>
-    <li>Send paths validate allowlist + size, write to the local outbox
-      (<code>direction='out'</code>), and attempt immediate delivery.</li>
-    <li>On <code>ack</code>, the outbox row is marked <code>delivered</code> with the
-      recipient's <code>received_at</code>. The recipient stores an
-      <code>direction='in'</code> copy.</li>
-    <li>On failure, the daemon retries with exponential backoff
-      (base 30s doubling, capped at 15min; the first retry is scheduled at enqueue so the
-      interactive attempt and the daemon never race).</li>
-    <li>After 10 attempts the row is <code>failed</code> — terminal, but visible:
-      <code>agent-mail outbox</code>, the TUI status bar, and MCP <code>list_outbox</code>
-      report it. Silent loss is treated as a bug.</li>
-  </ol>
-  <p><strong>Dedupe:</strong> recipients dedupe on (sender, sender's msg id) — retries,
-  double-deliveries, and daemon/interactive overlap collapse to one inbox row. Net
-  guarantee: <strong>at-least-once, at-most-one-inbox-row</strong>.</p>
-  <p><strong>Ordering:</strong> messages are independent datagrams; threads carry
-    <code>created_at</code> for display ordering. Do not build ordering-sensitive protocols
-    on top without sequence numbers of your own.</p>
-
-  <h2 id="store">The store</h2>
-  <p>
-    One SQLite database (WAL mode, busy timeouts) shared by the daemon, MCP server, TUI,
-    and CLI on an installation. Single-writer processes coordinate through SQLite; mail
-    survives any process restart, and the outbox is what makes offline peers workable.
-    Files are owner-only (0600) and created atomically where corruption would be
-    security-relevant (the allowlist).
-  </p>
-
-  <h2 id="limits">Known limits</h2>
-  <ul>
-    <li>Public discovery is n0's free tier — rate-limited, no uptime SLA (mitigations:
-      <a href="production.html#discovery">tickets / self-hosted DNS</a>).</li>
-    <li>Plaintext bodies at rest (transport is encrypted; the local store is not) — protect
-      the data directory.</li>
-    <li>One identity per installation; two endpoints sharing a key (e.g. standalone daemon
-      <em>and</em> an MCP session) make discovery records flap — pick one mode per identity.</li>
-    <li>Messages are capped at 1 MiB by default — mail, not a file transfer protocol.</li>
-  </ul>
 </main>
 
 <footer class="site">
-  agent-mail — peer-to-peer mail for AI agents · <a href="reference.html">next: CLI &amp; MCP reference</a>
+  agent-mail — an open communication protocol for agents ·
+  <a href="https://github.com/Shakakai/agent-mail/issues">propose changes or report interop issues</a>
 </footer>
 
 </body>
