@@ -152,8 +152,11 @@ impl Store {
 
     /// Record an incoming message (with any attachments). Returns false if
     /// it is a duplicate (same sender msg id already seen) — we still ack
-    /// duplicates.
+    /// duplicates. Attachments are validated before anything is written, so
+    /// a bad payload can't poison dedupe.
     pub fn record_incoming(&self, msg: &Message) -> Result<bool> {
+        validate_message_shapes(&msg.attachments)?;
+        let blobs = decode_attachments(&msg.attachments)?;
         let conn = self.conn.lock().unwrap();
         let key = ulid::Ulid::generate().to_string();
         let now = now_secs() as i64;
@@ -178,7 +181,7 @@ impl Store {
             ],
         )?;
         if n > 0 {
-            store_attachments(&conn, &key, &msg.attachments)?;
+            insert_attachments(&conn, &key, &msg.attachments, &blobs)?;
         }
         Ok(n > 0)
     }
@@ -189,7 +192,10 @@ impl Store {
     /// out so the daemon never races the interactive delivery attempt that
     /// enqueued this row.
     pub fn enqueue_outgoing(&self, msg: &Message, first_retry_secs: u64) -> Result<()> {
-        self.conn.lock().unwrap().execute(
+        validate_message_shapes(&msg.attachments)?;
+        let conn = self.conn.lock().unwrap();
+        let blobs = decode_attachments(&msg.attachments)?;
+        conn.execute(
             "INSERT INTO messages
              (msg_key, remote_id, direction, from_id, to_id, peer, thread_id,
               in_reply_to, content_type, body, created_at, status,
@@ -208,8 +214,7 @@ impl Store {
                 first_retry_secs as i64,
             ],
         )?;
-        let conn = self.conn.lock().unwrap();
-        store_attachments(&conn, &msg.id, &msg.attachments)?;
+        insert_attachments(&conn, &msg.id, &msg.attachments, &blobs)?;
         Ok(())
     }
 
@@ -588,22 +593,45 @@ fn map_stored(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     })
 }
 
-/// Persist a message's attachments, decoding base64 payloads to blobs.
-/// Verifies the declared size matches the decoded length.
-fn store_attachments(conn: &Connection, msg_key: &str, attachments: &[Attachment]) -> Result<()> {
+/// Decode and validate attachment payloads (base64 + declared-size
+/// consistency) BEFORE anything is written, so a bad payload can't leave a
+/// half-stored message behind.
+fn decode_attachments(attachments: &[Attachment]) -> Result<Vec<Vec<u8>>> {
     use base64::Engine;
-    for (ord, a) in attachments.iter().enumerate() {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&a.data_base64)
-            .context("attachment payload is not valid base64")?;
-        if bytes.len() as u64 != a.size {
-            bail!(
-                "attachment `{}` declares {} bytes but decodes to {}",
-                a.name,
-                a.size,
-                bytes.len()
-            );
-        }
+    attachments
+        .iter()
+        .map(|a| {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&a.data_base64)
+                .context("attachment payload is not valid base64")?;
+            if bytes.len() as u64 != a.size {
+                bail!(
+                    "attachment `{}` declares {} bytes but decodes to {}",
+                    a.name,
+                    a.size,
+                    bytes.len()
+                );
+            }
+            Ok(bytes)
+        })
+        .collect()
+}
+
+fn validate_message_shapes(attachments: &[Attachment]) -> Result<()> {
+    if attachments.len() > 64 {
+        bail!("too many attachments ({}) — limit is 64", attachments.len());
+    }
+    Ok(())
+}
+
+/// Persist decoded attachment blobs in wire order.
+fn insert_attachments(
+    conn: &Connection,
+    msg_key: &str,
+    attachments: &[Attachment],
+    blobs: &[Vec<u8>],
+) -> Result<()> {
+    for ((ord, a), bytes) in attachments.iter().enumerate().zip(blobs) {
         conn.execute(
             "INSERT OR REPLACE INTO attachments
              (msg_key, ord, name, content_type, size, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -791,6 +819,137 @@ mod tests {
         assert_eq!(store.list_threads().unwrap()[0].unread_count, 0);
         std::fs::remove_dir_all(dir).ok();
     }
+    #[test]
+    fn attachment_size_mismatch_rejected_before_insert() {
+        use base64::Engine;
+        let (store, dir) = tmp_store();
+        let mut msg = sample_msg("m-bad", "peer", "me");
+        msg.attachments.push(crate::proto::Attachment {
+            name: "bad.bin".into(),
+            content_type: "application/octet-stream".into(),
+            size: 999, // lies: payload decodes to 3 bytes
+            data_base64: base64::engine::general_purpose::STANDARD.encode([1u8, 2, 3]),
+        });
+        assert!(store.record_incoming(&msg).is_err());
+        // Nothing may be written: the inbox stays empty, so a corrected
+        // retry gets a real insert instead of a poisoned dedupe.
+        assert!(store.list_inbox(None).unwrap().is_empty());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn too_many_attachments_rejected() {
+        use base64::Engine;
+        let (store, dir) = tmp_store();
+        let mut msg = sample_msg("m-many", "peer", "me");
+        for i in 0..65 {
+            msg.attachments.push(crate::proto::Attachment {
+                name: format!("f{i}"),
+                content_type: "text/plain".into(),
+                size: 1,
+                data_base64: base64::engine::general_purpose::STANDARD.encode([b'x']),
+            });
+        }
+        assert!(store.record_incoming(&msg).is_err());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn retry_backoff_doubles_and_stays_in_future() {
+        let (store, dir) = tmp_store();
+        let msg = outgoing_msg("peer");
+        store.enqueue_outgoing(&msg, 0).unwrap();
+        let before = now_secs();
+        let mut last_delay = 0;
+        for attempts in 1..=5u64 {
+            store.mark_retry(&msg.id, attempts, 30, 900).unwrap();
+            let conn = rusqlite::Connection::open(&dir.join("test.db")).unwrap();
+            let next: i64 = conn
+                .query_row(
+                    "SELECT next_retry_at FROM messages WHERE msg_key = ?1",
+                    params![msg.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let delay = next as u64 - before;
+            assert!(delay > 0, "next retry must be in the future");
+            assert!(
+                delay >= last_delay,
+                "backoff must not shrink: {delay} < {last_delay}"
+            );
+            last_delay = delay;
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn v1_store_migrates_dropping_audience() {
+        let dir = std::env::temp_dir().join(format!("am-mig-test-{}", ulid::Ulid::generate()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("test.db");
+        {
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE messages (
+                     msg_key TEXT PRIMARY KEY, remote_id TEXT NOT NULL,
+                     direction TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL,
+                     peer TEXT NOT NULL, thread_id TEXT NOT NULL, in_reply_to TEXT,
+                     audience TEXT NOT NULL DEFAULT 'agent',
+                     content_type TEXT NOT NULL DEFAULT 'text/plain',
+                     body TEXT NOT NULL, created_at INTEGER NOT NULL,
+                     received_at INTEGER, read_at INTEGER,
+                     status TEXT NOT NULL DEFAULT 'unread',
+                     attempts INTEGER NOT NULL DEFAULT 0, next_retry_at INTEGER);
+                 INSERT INTO messages (msg_key, remote_id, direction, from_id, to_id, peer,
+                     thread_id, audience, body, created_at, status)
+                 VALUES ('k1', 'r1', 'in', 'p', 'm', 'p', 't', 'human', 'legacy', 1, 'unread');",
+            )
+            .unwrap();
+        }
+        let (store, _) = (open_at(&db).unwrap(), ());
+        let cols: Vec<String> = {
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            let mut stmt = conn
+                .prepare("SELECT name FROM pragma_table_info('messages')")
+                .unwrap();
+            stmt.query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert!(!cols.iter().any(|c| c == "audience"), "audience column must be dropped");
+        let rows = store.list_inbox(None).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].body, "legacy");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn read_attachment_missing_returns_none() {
+        let (store, dir) = tmp_store();
+        assert!(store.read_attachment("nope", 0).unwrap().is_none());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn get_hydrates_attachment_metadata() {
+        use base64::Engine;
+        let (store, dir) = tmp_store();
+        let mut msg = sample_msg("m-hyd", "peer", "me");
+        msg.attachments.push(crate::proto::Attachment {
+            name: "a.txt".into(),
+            content_type: "text/plain".into(),
+            size: 2,
+            data_base64: base64::engine::general_purpose::STANDARD.encode(b"hi"),
+        });
+        assert!(store.record_incoming(&msg).unwrap());
+        let in_key = store.list_inbox(None).unwrap()[0].msg_key.clone();
+        let full = store.get(&in_key).unwrap().unwrap();
+        assert_eq!(full.attachments.len(), 1);
+        assert_eq!(full.attachments[0].name, "a.txt");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
 }
 
 /// Test hook: open a store at an explicit path.

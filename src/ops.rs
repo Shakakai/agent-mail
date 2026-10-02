@@ -217,3 +217,87 @@ pub fn reply_context(paths: &Paths, msg_key: &str) -> Result<(String, String, St
         original.remote_id.clone(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::Attachment;
+
+    fn msg(body: &str, attachments: Vec<Attachment>) -> Message {
+        Message {
+            id: "m".into(),
+            thread_id: "t".into(),
+            in_reply_to: None,
+            from: "a".into(),
+            to: "b".into(),
+            created_at: 0,
+            content_type: "text/plain".into(),
+            body: body.to_string(),
+            attachments,
+        }
+    }
+
+    fn att(name: &str, size: u64, b64_len: u64) -> Attachment {
+        Attachment {
+            name: name.into(),
+            content_type: "application/octet-stream".into(),
+            size,
+            data_base64: "A".repeat(b64_len as usize),
+        }
+    }
+
+    #[test]
+    fn validate_accepts_plain_message() {
+        let cfg = Config::default();
+        assert!(validate_message(&cfg, &msg("hi", vec![])).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_oversize_body() {
+        let cfg = Config::default();
+        let big = "x".repeat(cfg.max_message_bytes + 1);
+        assert!(validate_message(&cfg, &msg(&big, vec![])).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_oversize_attachment() {
+        let cfg = Config::default();
+        let a = att("big.bin", MAX_ATTACHMENT_BYTES + 1, 16);
+        assert!(validate_message(&cfg, &msg("hi", vec![a])).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_wire_estimate_over_cap() {
+        let cfg = Config::default();
+        // Two attachments whose base64 exceeds the 64 MiB wire cap.
+        let a1 = att("a", 20 * 1024 * 1024, 32 * 1024 * 1024);
+        let a2 = att("b", 20 * 1024 * 1024, 32 * 1024 * 1024);
+        assert!(validate_message(&cfg, &msg("hi", vec![a1, a2])).is_err());
+    }
+
+    #[test]
+    fn validate_allows_large_but_legal_attachments() {
+        let cfg = Config::default();
+        let a = att("ok.bin", MAX_ATTACHMENT_BYTES, (MAX_ATTACHMENT_BYTES / 3) * 4 + 8);
+        assert!(validate_message(&cfg, &msg("hi", vec![a])).is_ok());
+    }
+
+    #[test]
+    fn attachment_from_file_reads_and_types() {
+        let dir = std::env::temp_dir().join(format!("am-att-test-{}", ulid::Ulid::generate()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let json_path = dir.join("data.json");
+        std::fs::write(&json_path, b"{\"a\":1}").unwrap();
+        let a = attachment_from_file(&json_path).unwrap();
+        assert_eq!(a.name, "data.json");
+        assert_eq!(a.content_type, "application/json");
+        assert_eq!(a.size, 7);
+        let bin_path = dir.join("blob.unknownext");
+        std::fs::write(&bin_path, b"\x00\x01").unwrap();
+        let b = attachment_from_file(&bin_path).unwrap();
+        assert_eq!(b.content_type, "application/octet-stream");
+        let missing = attachment_from_file(&dir.join("nope.txt"));
+        assert!(missing.is_err());
+        std::fs::remove_dir_all(dir).ok();
+    }
+}

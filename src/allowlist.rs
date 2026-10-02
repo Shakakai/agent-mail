@@ -127,3 +127,71 @@ impl AllowList {
         Ok(entry)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_path(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("am-allow-test-{name}-{}", ulid::Ulid::generate()));
+        std::fs::create_dir_all(&dir).unwrap();
+        (dir.clone(), dir.join("allowed-keys.toml"))
+    }
+
+    fn node_id() -> String {
+        iroh::SecretKey::generate().public().to_string()
+    }
+
+    #[test]
+    fn add_resolve_remove_round_trip() {
+        let (_dir, path) = tmp_path("roundtrip");
+        let id = node_id();
+        let mut list = AllowList::load_or_create(&path).unwrap();
+        list.add(PeerEntry { node_id: id.clone(), name: Some("peer-a".into()), human: false }).unwrap();
+        let loaded = AllowList::load(&path).unwrap();
+        assert!(loaded.contains(&id.parse().unwrap()));
+        assert_eq!(loaded.resolve("peer-a").unwrap().node_id, id);
+        assert_eq!(loaded.resolve(&id).unwrap().name.as_deref(), Some("peer-a"));
+        let mut loaded = loaded;
+        let removed = loaded.remove("peer-a").unwrap();
+        assert_eq!(removed.node_id, id);
+        assert!(!AllowList::load(&path).unwrap().contains(&id.parse().unwrap()));
+        std::fs::remove_dir_all(_dir).ok();
+    }
+
+    #[test]
+    fn add_rejects_invalid_node_id_and_duplicates() {
+        let (_dir, path) = tmp_path("invalid");
+        let mut list = AllowList::load_or_create(&path).unwrap();
+        assert!(list.add(PeerEntry { node_id: "not-a-key".into(), name: None, human: false }).is_err());
+        let id = node_id();
+        list.add(PeerEntry { node_id: id.clone(), name: None, human: false }).unwrap();
+        assert!(list.add(PeerEntry { node_id: id.clone(), name: None, human: false }).is_err());
+        std::fs::remove_dir_all(_dir).ok();
+    }
+
+    #[test]
+    fn missing_file_loads_empty() {
+        let (_dir, path) = tmp_path("missing");
+        let list = AllowList::load(&path).unwrap();
+        assert!(list.entries.is_empty());
+        assert!(!list.contains(&node_id().parse().unwrap()));
+        std::fs::remove_dir_all(_dir).ok();
+    }
+
+    #[test]
+    fn save_is_atomic_no_tmp_left() {
+        let (_dir, path) = tmp_path("atomic");
+        let mut list = AllowList::load_or_create(&path).unwrap();
+        list.add(PeerEntry { node_id: node_id(), name: Some("x".into()), human: true }).unwrap();
+        let tmp = path.with_extension("tmp");
+        assert!(!tmp.exists(), "tmp file must not linger after save");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "allowlist must be 0600");
+        }
+        std::fs::remove_dir_all(_dir).ok();
+    }
+}

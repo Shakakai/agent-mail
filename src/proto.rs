@@ -177,3 +177,110 @@ pub async fn read_frame<R: AsyncRead + Unpin>(r: &mut R, max_bytes: usize) -> Re
     }
     Ok(frame)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prefixed(payload: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    #[tokio::test]
+    async fn hello_frame_round_trips() {
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &Frame::hello()).await.unwrap();
+        let mut slice: &[u8] = &buf;
+        let back = read_frame(&mut slice, MAX_FRAME_BYTES).await.unwrap();
+        match back.body {
+            FrameBody::Hello { agent, caps, .. } => {
+                assert_eq!(agent.name, "agent-mail");
+                assert!(caps.iter().any(|c| c == CAP_MAIL));
+                assert!(caps.iter().any(|c| c == CAP_ATTACHMENTS));
+            }
+            other => panic!("expected hello, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn send_frame_with_attachment_round_trips() {
+        let msg = Message {
+            id: "m1".into(),
+            thread_id: "t1".into(),
+            in_reply_to: Some("m0".into()),
+            from: "a".into(),
+            to: "b".into(),
+            created_at: 42,
+            content_type: "text/plain".into(),
+            body: "hi".into(),
+            attachments: vec![Attachment {
+                name: "f.bin".into(),
+                content_type: "application/octet-stream".into(),
+                size: 3,
+                data_base64: "AQID".into(),
+            }],
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &Frame::send(&msg)).await.unwrap();
+        let mut slice: &[u8] = &buf;
+        let back = read_frame(&mut slice, MAX_WIRE_BYTES).await.unwrap();
+        match back.body {
+            FrameBody::Send { msg: m, .. } => {
+                assert_eq!(m, msg);
+                assert_eq!(m.attachments[0].data_base64, "AQID");
+            }
+            other => panic!("expected send, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn oversize_length_prefix_rejected_before_alloc() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&((MAX_FRAME_BYTES as u32 + 1).to_le_bytes()));
+        let mut slice: &[u8] = &buf;
+        assert!(read_frame(&mut slice, MAX_FRAME_BYTES).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn version_mismatch_rejected() {
+        let payload = br#"{"v": 2, "type": "hello", "id": "x", "agent": {"name": "a", "version": "0"}, "caps": [], "since": 0}"#;
+        let mut slice: &[u8] = &prefixed(payload);
+        assert!(read_frame(&mut slice, MAX_FRAME_BYTES).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn malformed_json_rejected() {
+        let mut slice: &[u8] = &prefixed(b"this is not json");
+        assert!(read_frame(&mut slice, MAX_FRAME_BYTES).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn truncated_stream_errors() {
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &Frame::hello()).await.unwrap();
+        buf.truncate(buf.len() - 3); // cut the payload short
+        let mut slice: &[u8] = &buf;
+        assert!(read_frame(&mut slice, MAX_FRAME_BYTES).await.is_err());
+    }
+
+    #[test]
+    fn message_serde_defaults_missing_attachments() {
+        let json = r#"{"id":"m","thread_id":"t","in_reply_to":null,"from":"a","to":"b",
+                       "created_at":1,"content_type":"text/plain","body":"x"}"#;
+        let m: Message = serde_json::from_str(json).unwrap();
+        assert!(m.attachments.is_empty());
+        let wire = serde_json::to_string(&m).unwrap();
+        assert!(wire.contains("\"body\":\"x\""));
+    }
+
+    #[test]
+    fn error_frame_serializes_of_field() {
+        let f = Frame::error(ErrorCode::TooLarge, Some("m1".into()), "too big");
+        let v = serde_json::to_value(&f).unwrap();
+        assert_eq!(v["of"], "m1");
+        assert_eq!(v["code"], "too_large");
+    }
+}

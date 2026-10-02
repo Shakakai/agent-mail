@@ -182,3 +182,80 @@ impl Config {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("am-cfg-test-{name}-{}", ulid::Ulid::generate()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn missing_file_gives_defaults() {
+        let dir = tmp_dir("defaults");
+        let c = Config::load(&dir).unwrap();
+        assert_eq!(c.max_message_bytes, 1 << 20);
+        assert_eq!(c.retry_base_secs, 30);
+        assert_eq!(c.daemon_tick_secs, 15);
+        assert!(!c.mcp_allow_trust_changes);
+        assert_eq!(c.relay, RelayCfg::N0);
+        assert!(c.discovery);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn full_parse_custom_relay_no_discovery() {
+        let dir = tmp_dir("custom");
+        std::fs::write(
+            dir.join("config.toml"),
+            r#"max_message_bytes = 2048
+retry_base_secs = 10
+retry_max_secs = 60
+daemon_tick_secs = 5
+mcp_allow_trust_changes = true
+relay = "custom"
+relay_urls = ["https://relay.example.com."]
+discovery = false
+"#,
+        )
+        .unwrap();
+        let c = Config::load(&dir).unwrap();
+        assert_eq!(c.max_message_bytes, 2048);
+        assert_eq!(c.retry_base_secs, 10);
+        assert_eq!(c.retry_max_secs, 60);
+        assert_eq!(c.daemon_tick_secs, 5);
+        assert!(c.mcp_allow_trust_changes);
+        assert_eq!(c.relay, RelayCfg::Custom(vec!["https://relay.example.com.".into()]));
+        assert!(!c.discovery);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn relay_disabled_parses() {
+        let dir = tmp_dir("disabled");
+        std::fs::write(dir.join("config.toml"), "relay = \"disabled\"\n").unwrap();
+        let c = Config::load(&dir).unwrap();
+        assert_eq!(c.relay, RelayCfg::Disabled);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn invalid_relay_value_errors() {
+        let dir = tmp_dir("bad");
+        std::fs::write(dir.join("config.toml"), "relay = \"bogus\"\n").unwrap();
+        assert!(Config::load(&dir).is_err());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn custom_relay_requires_urls() {
+        let dir = tmp_dir("nourls");
+        std::fs::write(dir.join("config.toml"), "relay = \"custom\"\n").unwrap();
+        let err = Config::load(&dir).unwrap_err().to_string();
+        assert!(err.contains("relay_urls"), "error should name relay_urls: {err}");
+        std::fs::remove_dir_all(dir).ok();
+    }
+}
