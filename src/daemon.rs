@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use iroh::{Endpoint, SecretKey, endpoint::presets, protocol::{AcceptError, ProtocolHandler, Router}};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::allowlist::AllowList;
@@ -121,6 +122,23 @@ fn handle_message(
 }
 
 pub async fn run(paths: Paths, config: Config) -> Result<()> {
+    // SIGINT cancels the shutdown notify, ending the loop below.
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    {
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                shutdown.notify_one();
+            }
+        });
+    }
+    run_until(paths, config, shutdown).await
+}
+
+/// Run the daemon until `shutdown` is notified. Used directly by the
+/// `daemon` command (SIGINT feeds the notify) and embedded by the MCP
+/// server, which cancels it when the stdio session ends.
+pub async fn run_until(paths: Paths, config: Config, shutdown: Arc<tokio::sync::Notify>) -> Result<()> {
     let secret_key = identity::load(&paths)?;
     let me = identity::node_id(&secret_key);
     info!("agent-mail daemon starting");
@@ -164,8 +182,7 @@ pub async fn run(paths: Paths, config: Config) -> Result<()> {
                     warn!("outbox retry pass failed: {e:#}");
                 }
             }
-            res = tokio::signal::ctrl_c() => {
-                res?;
+            _ = shutdown.notified() => {
                 info!("shutting down");
                 break;
             }
@@ -193,6 +210,14 @@ async fn retry_outbox(
                 continue;
             }
         };
+        if queued.message.to == me {
+            // Loopback to our own NodeId: iroh can't dial us, so record
+            // the message straight into our own inbox.
+            store.record_incoming(&queued.message)?;
+            store.mark_delivered(&queued.msg_key, crate::util::now_secs())?;
+            info!(to = %queued.peer, "delivered {} (loopback)", queued.msg_key);
+            continue;
+        }
         let result = client::deliver(
             endpoint,
             iroh::EndpointAddr::from(peer),

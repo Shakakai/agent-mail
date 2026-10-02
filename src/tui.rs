@@ -113,6 +113,7 @@ pub struct App {
     focus: Focus,
     filter: Filter,
     backlog: u64,
+    outbox_failed: u64,
     modal: Option<Modal>,
     peer_names: Vec<(String, String)>, // (node_id, name) for display + completion
     last_status: String,
@@ -137,6 +138,7 @@ impl App {
             focus: Focus::Threads,
             filter: Filter::All,
             backlog: 0,
+            outbox_failed: 0,
             modal: None,
             peer_names: Vec::new(),
             last_status: String::new(),
@@ -169,24 +171,36 @@ impl App {
             .collect();
         self.selected_thread = self.selected_thread.min(self.threads.len().saturating_sub(1));
         self.load_messages()?;
-        self.backlog = self.store.outbox_backlog();
+        let (pending, failed) = self.store.outbox_counts();
+        self.backlog = pending;
+        self.outbox_failed = failed;
         Ok(())
     }
 
     fn load_messages(&mut self) -> Result<()> {
         if let Some(t) = self.threads.get(self.selected_thread) {
             self.messages = self.store.thread_messages(&t.thread_id)?;
-            // opening a thread marks it read
-            self.store.mark_thread_read(&t.thread_id)?;
-            if let Some(t) = self.threads.get_mut(self.selected_thread) {
-                t.unread_count = 0;
-            }
         } else {
             self.messages = Vec::new();
         }
         self.selected_msg = self
             .selected_msg
             .min(self.messages.len().saturating_sub(1));
+        Ok(())
+    }
+
+    /// Deliberately open a thread: only then is it marked read. Merely
+    /// moving the selection must not destroy the unread signal the agent
+    /// relies on.
+    fn open_thread(&mut self) -> Result<()> {
+        if let Some(t) = self.threads.get(self.selected_thread) {
+            let thread_id = t.thread_id.clone();
+            self.store.mark_thread_read(&thread_id)?;
+            self.load_messages()?;
+            if let Some(t) = self.threads.get_mut(self.selected_thread) {
+                t.unread_count = 0;
+            }
+        }
         Ok(())
     }
 
@@ -199,7 +213,7 @@ impl App {
             let peer_id = peer_id?;
             let (thread, reply_to) = match &c.reply_to {
                 Some(key) => {
-                    let (_, thread, remote) = ops::reply_context(&self.paths, key)?;
+                    let (_, thread, remote, _) = ops::reply_context(&self.paths, key)?;
                     (Some(thread), Some(remote))
                 }
                 None => (None, None),
@@ -318,7 +332,7 @@ impl App {
                 let _ = self.refresh();
             }
             (KeyCode::Enter, _) if self.focus == Focus::Threads => {
-                let _ = self.load_messages();
+                let _ = self.open_thread();
             }
             (KeyCode::Char('c'), _) => {
                 let peer = self
@@ -647,11 +661,16 @@ impl App {
     }
 
     fn draw_status(&self, f: &mut Frame, area: Rect) {
+        let outbox = if self.outbox_failed > 0 {
+            format!("outbox:{} ({} failed)", self.backlog, self.outbox_failed)
+        } else {
+            format!("outbox:{}", self.backlog)
+        };
         let text = format!(
-            "id {} │ filter:{} │ outbox:{} │ {}{}\nTab pane · j/k move · Enter open · c compose · r reply · v raw · a allowlist · f filter · g refresh · ? help · q quit",
+            "id {} │ filter:{} │ {} │ {}{}\nTab pane · j/k move · Enter open · c compose · r reply · v raw · a allowlist · f filter · g refresh · ? help · q quit",
             short(&self.me),
             self.filter.label(),
-            self.backlog,
+            outbox,
             if self.last_status.is_empty() { "" } else { "│ " },
             self.last_status,
         );

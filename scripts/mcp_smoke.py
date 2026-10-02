@@ -141,14 +141,26 @@ def main():
         names = sorted(t["name"] for t in tools["tools"])
         print("tools:", names)
         assert names == ["allow_add", "allow_list", "get_identity", "list_inbox",
-                         "list_threads", "read_message", "reply", "send_message"], names
+                         "list_outbox", "list_threads", "read_message", "reply",
+                         "send_message"], names
 
+        # Give both embedded daemons a moment to come online and publish
+        # discovery records; n0's free tier is rate-limited and flaky.
+        time.sleep(8)
         sent = a.call("send_message", {"peer": "agent-b", "body": "hello via MCP"})
         print("A send:", sent["status"], sent["msg_key"][:12])
-        assert sent["status"] == "delivered", sent
 
-        time.sleep(1.5)
-        inbox = b.call("list_inbox", {"unread_only": True})
+        # Immediate delivery is best-effort (offline or undiscovered peers
+        # queue); what must hold is eventual delivery via the daemon retry.
+        deadline = time.time() + 90
+        inbox = []
+        while time.time() < deadline:
+            time.sleep(3)
+            inbox = b.call("list_inbox", {"unread_only": True})
+            if any(m["body"] == "hello via MCP" for m in inbox):
+                break
+        assert any(m["body"] == "hello via MCP" for m in inbox), \
+            f"send was not delivered to B within 90s: {inbox}"
         assert len(inbox) == 1 and inbox[0]["body"] == "hello via MCP", inbox
         key = inbox[0]["msg_key"]
         print("B inbox: 1 unread from", inbox[0]["from_id"][:12], "...")

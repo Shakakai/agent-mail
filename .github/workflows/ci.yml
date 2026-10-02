@@ -18,6 +18,20 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - run: cargo test --locked
 
+  smoke:
+    name: End-to-end MCP smoke (two identities)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - run: cargo build
+      - name: Set up two test identities
+        run: scripts/mcp_smoke_setup.sh target/debug/agent-mail
+      - name: Drive two MCP servers over stdio
+        run: python3 scripts/mcp_smoke.py target/debug/agent-mail
+
   build:
     name: Build binaries
     needs: test

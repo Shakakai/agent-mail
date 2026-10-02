@@ -13,6 +13,9 @@ use crate::config::Paths;
 use crate::proto::{Audience, Message};
 use crate::util::now_secs;
 
+/// Delivery attempts before an outgoing message is marked `failed`.
+pub const MAX_ATTEMPTS: u64 = 10;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS messages (
     msg_key      TEXT PRIMARY KEY,
@@ -41,6 +44,10 @@ CREATE TABLE IF NOT EXISTS rejections (
     count     INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (node_id)
 );
+-- One-time migration (idempotent): rows exhausted under the old hardcoded
+-- filter stay 'queued' forever and were invisible; surface them as failed.
+UPDATE messages SET status = 'failed'
+ WHERE direction = 'out' AND status = 'queued' AND attempts >= 10;
 ";
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +116,8 @@ impl Store {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(SCHEMA)?;
+        #[cfg(unix)]
+        lock_down_db_files(&paths.db);
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -145,7 +154,9 @@ impl Store {
     }
 
     /// Queue an outgoing message. The wire `id` is the row's `msg_key`, so
-    /// peers can dedupe retries and reference it in `in_reply_to`.
+    /// peers can dedupe retries and reference it in `in_reply_to`. The
+    /// first daemon retry is scheduled `first_retry_secs` out so the daemon
+    /// never races the interactive delivery attempt that enqueued this row.
     pub fn enqueue_outgoing(
         &self,
         me: &str,
@@ -155,6 +166,7 @@ impl Store {
         audience: Audience,
         content_type: &str,
         body: &str,
+        first_retry_secs: u64,
     ) -> Result<Message> {
         let key = ulid::Ulid::generate().to_string();
         let now = now_secs();
@@ -172,8 +184,10 @@ impl Store {
         self.conn.lock().unwrap().execute(
             "INSERT INTO messages
              (msg_key, remote_id, direction, from_id, to_id, peer, thread_id,
-              in_reply_to, audience, content_type, body, created_at, status)
-             VALUES (?1, ?1, 'out', ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued')",
+              in_reply_to, audience, content_type, body, created_at, status,
+              next_retry_at)
+             VALUES (?1, ?1, 'out', ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued',
+                     ?9 + ?10)",
             params![
                 key,
                 me,
@@ -184,6 +198,7 @@ impl Store {
                 content_type,
                 body,
                 now as i64,
+                first_retry_secs as i64,
             ],
         )?;
         Ok(msg)
@@ -200,16 +215,19 @@ impl Store {
     }
 
     /// Record a failed delivery attempt and schedule the next retry with
-    /// exponential backoff (base * 2^attempts, capped).
+    /// exponential backoff (base * 2^attempts, capped). At MAX_ATTEMPTS the
+    /// message transitions to `failed`: it leaves the retry loop but stays
+    /// visible via `outbox_counts`/`list_outgoing` instead of vanishing.
     pub fn mark_retry(&self, msg_key: &str, attempts: u64, base_secs: u64, max_secs: u64) -> Result<()> {
         let delay = base_secs
             .saturating_mul(1u64 << attempts.min(16))
             .min(max_secs);
         let next = now_secs() + delay;
         self.conn.lock().unwrap().execute(
-            "UPDATE messages SET attempts = ?2, next_retry_at = ?3
+            "UPDATE messages SET attempts = ?2, next_retry_at = ?3,
+                    status = CASE WHEN ?2 >= ?4 THEN 'failed' ELSE 'queued' END
              WHERE msg_key = ?1 AND direction = 'out'",
-            params![msg_key, attempts as i64, next as i64],
+            params![msg_key, attempts as i64, next as i64, MAX_ATTEMPTS as i64],
         )?;
         Ok(())
     }
@@ -223,12 +241,12 @@ impl Store {
                     body, created_at, from_id, to_id, attempts
              FROM messages
              WHERE direction = 'out' AND status IN ('queued', 'failed')
-               AND attempts < 10
+               AND attempts < ?3
                AND (next_retry_at IS NULL OR next_retry_at <= ?1)
              ORDER BY created_at
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![now, limit as i64], |row| {
+        let rows = stmt.query_map(params![now, limit as i64, MAX_ATTEMPTS as i64], |row| {
             let audience: String = row.get(4)?;
             Ok(QueuedMessage {
                 msg_key: row.get(0)?,
@@ -345,19 +363,40 @@ impl Store {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
-    /// Count of outgoing messages still waiting for delivery.
-    pub fn outbox_backlog(&self) -> u64 {
+    /// (pending, failed) counts for outgoing messages. Failed messages are
+    /// terminal but counted, so exhaustion is visible rather than silent.
+    pub fn outbox_counts(&self) -> (u64, u64) {
         self.conn
             .lock()
             .unwrap()
             .query_row(
-                "SELECT COUNT(*) FROM messages WHERE direction = 'out'
-                 AND status IN ('queued', 'failed') AND attempts < 10",
-                params![],
-                |row| row.get::<_, i64>(0),
+                "SELECT
+                   COALESCE(SUM(CASE WHEN status = 'queued'
+                                      AND attempts < ?1 THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN status = 'failed'
+                                      OR (status = 'queued' AND attempts >= ?1)
+                                     THEN 1 ELSE 0 END), 0)
+                 FROM messages WHERE direction = 'out'",
+                params![MAX_ATTEMPTS as i64],
+                |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64)),
             )
-            .map(|n| n as u64)
-            .unwrap_or(0)
+            .unwrap_or((0, 0))
+    }
+
+    /// Outgoing messages awaiting delivery or given up, oldest first.
+    pub fn list_outgoing(&self) -> Result<Vec<StoredMessage>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
+                    audience, content_type, body, created_at, received_at, read_at,
+                    status, attempts
+             FROM messages
+             WHERE direction = 'out' AND status IN ('queued', 'failed')
+             ORDER BY created_at
+             LIMIT 500",
+        )?;
+        let rows = stmt.query_map(params![], map_stored)?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
     /// Messages of one thread, chronological.
@@ -442,8 +481,144 @@ fn parse_audience(s: &str) -> Audience {
     }
 }
 
+/// Mail bodies are plaintext and sensitive; keep the store files readable
+/// only by the owner. Applied on every open so existing installs are
+/// tightened, not just newly created ones.
+#[cfg(unix)]
+fn lock_down_db_files(db: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    for candidate in [
+        db.to_path_buf(),
+        db.with_extension("db-wal"),
+        db.with_extension("db-shm"),
+    ] {
+        if let Ok(meta) = std::fs::metadata(&candidate) {
+            let mut perms = meta.permissions();
+            if perms.mode() & 0o077 != 0 {
+                perms.set_mode(0o600);
+                let _ = std::fs::set_permissions(&candidate, perms);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::Audience;
+
+    fn tmp_store() -> (Store, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("am-store-test-{}", ulid::Ulid::generate()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("test.db");
+        (open_at(&db).unwrap(), dir)
+    }
+
+    fn sample_msg(id: &str, from: &str, to: &str) -> crate::proto::Message {
+        crate::proto::Message {
+            id: id.to_string(),
+            thread_id: "t1".to_string(),
+            in_reply_to: None,
+            from: from.to_string(),
+            to: to.to_string(),
+            created_at: now_secs(),
+            audience: Audience::Agent,
+            content_type: "text/plain".to_string(),
+            body: "hello".to_string(),
+        }
+    }
+
+    #[test]
+    fn incoming_dedupes_on_remote_id() {
+        let (store, dir) = tmp_store();
+        assert!(store.record_incoming(&sample_msg("m1", "peer", "me")).unwrap());
+        assert!(!store.record_incoming(&sample_msg("m1", "peer", "me")).unwrap());
+        assert_eq!(store.list_inbox(None, false).unwrap().len(), 1);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn enqueue_schedules_first_retry_and_hides_from_due() {
+        let (store, dir) = tmp_store();
+        let msg = store
+            .enqueue_outgoing("me", "peer", "t1", None, Audience::Agent, "text/plain", "hi", 600)
+            .unwrap();
+        // Not due immediately: the interactive send owns the first attempt.
+        assert!(store.due_outgoing(50).unwrap().is_empty());
+        assert_eq!(store.outbox_counts(), (1, 0));
+        // Delivered rows leave the outbox entirely.
+        store.mark_delivered(&msg.id, now_secs()).unwrap();
+        assert_eq!(store.outbox_counts(), (0, 0));
+        assert!(store.list_outgoing().unwrap().is_empty());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn zero_first_retry_is_due_at_once() {
+        let (store, dir) = tmp_store();
+        store
+            .enqueue_outgoing("me", "peer", "t1", None, Audience::Agent, "text/plain", "hi", 0)
+            .unwrap();
+        assert_eq!(store.due_outgoing(50).unwrap().len(), 1);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn retries_back_off_then_fail_visibly_at_max_attempts() {
+        let (store, dir) = tmp_store();
+        let msg = store
+            .enqueue_outgoing("me", "peer", "t1", None, Audience::Agent, "text/plain", "hi", 0)
+            .unwrap();
+        for attempts in 1..MAX_ATTEMPTS {
+            store.mark_retry(&msg.id, attempts, 30, 900).unwrap();
+            assert_eq!(store.get(&msg.id).unwrap().unwrap().status, "queued");
+        }
+        store.mark_retry(&msg.id, MAX_ATTEMPTS, 30, 900).unwrap();
+        let row = store.get(&msg.id).unwrap().unwrap();
+        assert_eq!(row.status, "failed");
+        // Exhausted: out of the retry loop...
+        assert!(store.due_outgoing(50).unwrap().is_empty());
+        // ...but visible in counts and the outbox listing.
+        assert_eq!(store.outbox_counts(), (0, 1));
+        assert_eq!(store.list_outgoing().unwrap().len(), 1);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn loopback_writes_in_copy() {
+        let (store, dir) = tmp_store();
+        let msg = store
+            .enqueue_outgoing("me", "me", "t1", None, Audience::Human, "text/plain", "note", 0)
+            .unwrap();
+        assert!(store.record_incoming(&msg).unwrap());
+        store.mark_delivered(&msg.id, now_secs()).unwrap();
+        let inbox = store.list_inbox(None, true).unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].body, "note");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn threads_aggregate_counts() {
+        let (store, dir) = tmp_store();
+        store
+            .record_incoming(&sample_msg("m1", "peer", "me"))
+            .unwrap();
+        store
+            .record_incoming(&sample_msg("m2", "peer", "me"))
+            .unwrap();
+        let threads = store.list_threads().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].message_count, 2);
+        assert_eq!(threads[0].unread_count, 2);
+        store.mark_thread_read("t1").unwrap();
+        assert_eq!(store.list_threads().unwrap()[0].unread_count, 0);
+        std::fs::remove_dir_all(dir).ok();
+    }
+}
+
 /// Test hook: open a store at an explicit path.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn open_at(db_path: &Path) -> Result<Store> {
     let paths = Paths {
         config_dir: db_path

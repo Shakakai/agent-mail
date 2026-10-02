@@ -36,7 +36,9 @@ enum Commands {
     },
     /// Run the mail daemon (receives mail, retries the outbox).
     Daemon,
-    /// Serve MCP over stdio (the agent interface).
+    /// Serve MCP over stdio (the agent interface). The mail daemon runs
+    /// in-process for the lifetime of the MCP server and shuts down when
+    /// the stdio session ends.
     Mcp,
     /// Human mail client (TUI).
     Tui,
@@ -75,6 +77,12 @@ enum Commands {
         /// Filter by peer NodeId or name.
         #[arg(long)]
         peer: Option<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List outgoing messages awaiting delivery (queued or failed).
+    Outbox {
         /// Output as JSON.
         #[arg(long)]
         json: bool,
@@ -135,6 +143,7 @@ pub async fn run(paths: Paths) -> Result<()> {
         } => cmd_send(&paths, &config, &peer, &message, stdin, ticket.as_deref(), &audience, json).await,
         Commands::Addr { json } => cmd_addr(&paths, json).await,
         Commands::Inbox { human, peer, json } => cmd_inbox(&paths, peer, human, json),
+        Commands::Outbox { json } => cmd_outbox(&paths, json),
         Commands::Read { msg_key, json } => cmd_read(&paths, &msg_key, json),
         Commands::Reply {
             msg_key,
@@ -278,6 +287,13 @@ async fn cmd_send(
     if body.is_empty() {
         bail!("message body is empty");
     }
+    if body.len() > config.max_message_bytes {
+        bail!(
+            "message body is {} bytes, exceeds the {}-byte limit",
+            body.len(),
+            config.max_message_bytes
+        );
+    }
 
     let store = Store::open(paths)?;
     let thread_id = ulid::Ulid::generate().to_string();
@@ -287,46 +303,36 @@ async fn cmd_send(
         .bind()
         .await
         .map_err(crate::util::de)?;
-    let result = match ticket {
-        Some(t) => {
-            let addr: iroh::EndpointAddr = serde_json::from_str(t)
-                .context("invalid --ticket (expected JSON from `agent-mail addr`)")?;
-            if addr.id.to_string() != peer_id {
-                bail!("ticket id does not match peer {peer_id}");
+    let msg = store.enqueue_outgoing(
+        &me,
+        &peer_id,
+        &thread_id,
+        None,
+        audience,
+        "text/plain",
+        &body,
+        config.retry_base_secs,
+    )?;
+    let result = if peer_id == me && ticket.is_none() {
+        // Loopback: iroh can't dial our own NodeId; write into our inbox.
+        store.record_incoming(&msg)?;
+        Ok(crate::util::now_secs())
+    } else {
+        let target = match ticket {
+            Some(t) => {
+                let addr: iroh::EndpointAddr = serde_json::from_str(t)
+                    .context("invalid --ticket (expected JSON from `agent-mail addr`)")?;
+                if addr.id.to_string() != peer_id {
+                    bail!("ticket id does not match peer {peer_id}");
+                }
+                addr
             }
-            let msg = store.enqueue_outgoing(
-                &me,
-                &peer_id,
-                &thread_id,
-                None,
-                audience,
-                "text/plain",
-                &body,
-            )?;
-            let r = client::deliver(&endpoint, addr, &msg).await;
-            (r, msg.id)
-        }
-        None => {
-            let msg = store.enqueue_outgoing(
-                &me,
-                &peer_id,
-                &thread_id,
-                None,
-                audience,
-                "text/plain",
-                &body,
-            )?;
-            let r = client::deliver(
-                &endpoint,
-                iroh::EndpointAddr::from(peer_id.parse::<iroh::EndpointId>()?),
-                &msg,
-            )
-            .await;
-            (r, msg.id)
-        }
+            None => iroh::EndpointAddr::from(peer_id.parse::<iroh::EndpointId>()?),
+        };
+        client::deliver(&endpoint, target, &msg).await
     };
     endpoint.close().await;
-    let (result, msg_key) = result;
+    let msg_key = msg.id;
 
     match result {
         Ok(received_at) => {
@@ -353,6 +359,36 @@ fn print_send_result(msg_key: &str, peer: &str, delivered: bool, json: bool) {
     } else {
         println!("queued for {peer} (msg {msg_key})");
     }
+}
+
+fn cmd_outbox(paths: &Paths, json: bool) -> Result<()> {
+    let store = Store::open(paths)?;
+    let rows = store.list_outgoing()?;
+    let (pending, failed) = store.outbox_counts();
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({"pending": pending, "failed": failed, "messages": rows})
+        );
+        return Ok(());
+    }
+    println!("outbox: {pending} pending, {failed} failed");
+    if rows.is_empty() {
+        println!("nothing queued");
+        return Ok(());
+    }
+    for r in &rows {
+        let preview: String = r.body.chars().take(60).collect();
+        let age = humanize(crate::util::now_secs().saturating_sub(r.created_at));
+        println!(
+            "{}  {}  attempts:{}  {age} old  {}",
+            &r.status,
+            &r.msg_key[..8.min(r.msg_key.len())],
+            r.attempts,
+            preview.replace('\n', " "),
+        );
+    }
+    Ok(())
 }
 
 fn cmd_inbox(paths: &Paths, peer: Option<String>, human: bool, json: bool) -> Result<()> {
@@ -430,34 +466,52 @@ async fn cmd_reply(
     if body.is_empty() {
         bail!("message body is empty");
     }
+    if body.len() > config.max_message_bytes {
+        bail!(
+            "message body is {} bytes, exceeds the {}-byte limit",
+            body.len(),
+            config.max_message_bytes
+        );
+    }
 
     // For an inbound message, the wire `in_reply_to` is the sender's own
     // message id (the `remote_id` of our row), not our local row key.
     let reply_to = Some(original.remote_id.as_str());
     let thread_id = original.thread_id.clone();
     let peer_id = original.from_id.clone();
+    // Replies keep the original message's audience: human mail gets human
+    // replies, so the human filter on the receiving side still sees them.
+    let audience = parse_audience(&original.audience)?;
     let msg = store.enqueue_outgoing(
         &me,
         &peer_id,
         &thread_id,
         reply_to,
-        Audience::Agent,
+        audience,
         "text/plain",
         &body,
+        config.retry_base_secs,
     )?;
 
-    let endpoint = Endpoint::builder(presets::N0)
-        .secret_key(sk.clone())
-        .bind()
-        .await
-        .map_err(crate::util::de)?;
-    let result = client::deliver(
-        &endpoint,
-        iroh::EndpointAddr::from(peer_id.parse::<iroh::EndpointId>()?),
-        &msg,
-    )
-    .await;
-    endpoint.close().await;
+    let result = if peer_id == me {
+        // Loopback: iroh can't dial our own NodeId; write into our inbox.
+        store.record_incoming(&msg)?;
+        Ok(crate::util::now_secs())
+    } else {
+        let endpoint = Endpoint::builder(presets::N0)
+            .secret_key(sk.clone())
+            .bind()
+            .await
+            .map_err(crate::util::de)?;
+        let r = client::deliver(
+            &endpoint,
+            iroh::EndpointAddr::from(peer_id.parse::<iroh::EndpointId>()?),
+            &msg,
+        )
+        .await;
+        endpoint.close().await;
+        r
+    };
 
     match result {
         Ok(received_at) => {

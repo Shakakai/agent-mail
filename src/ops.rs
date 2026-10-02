@@ -1,7 +1,7 @@
 //! Shared mail operations used by both the CLI and the MCP server:
 //! enqueue + deliver-or-queue, inbox listing, reading, replying, threads.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use iroh::{Endpoint, SecretKey, endpoint::presets};
 
 use crate::client;
@@ -38,6 +38,13 @@ pub async fn send_message(
     in_reply_to: Option<&str>,
 ) -> Result<DeliveryOutcome> {
     let store = Store::open(paths)?;
+    if body.len() > config.max_message_bytes {
+        bail!(
+            "message body is {} bytes, exceeds the {}-byte limit",
+            body.len(),
+            config.max_message_bytes
+        );
+    }
     let thread_id = thread_id
         .map(|t| t.to_string())
         .unwrap_or_else(|| ulid::Ulid::generate().to_string());
@@ -49,20 +56,29 @@ pub async fn send_message(
         audience,
         "text/plain",
         body,
+        config.retry_base_secs,
     )?;
 
-    let endpoint = Endpoint::builder(presets::N0)
-        .secret_key(sk.clone())
-        .bind()
-        .await
-        .map_err(crate::util::de)?;
-    let result = client::deliver(
-        &endpoint,
-        iroh::EndpointAddr::from(peer_id.parse::<iroh::EndpointId>()?),
-        &msg,
-    )
-    .await;
-    endpoint.close().await;
+    let result = if peer_id == me {
+        // Loopback: iroh does not support dialing our own NodeId, so a
+        // message addressed to ourselves goes straight into our inbox.
+        store.record_incoming(&msg)?;
+        Ok(crate::util::now_secs())
+    } else {
+        let endpoint = Endpoint::builder(presets::N0)
+            .secret_key(sk.clone())
+            .bind()
+            .await
+            .map_err(crate::util::de)?;
+        let r = client::deliver(
+            &endpoint,
+            iroh::EndpointAddr::from(peer_id.parse::<iroh::EndpointId>()?),
+            &msg,
+        )
+        .await;
+        endpoint.close().await;
+        r
+    };
 
     match result {
         Ok(received_at) => {
@@ -128,8 +144,10 @@ pub fn list_threads(paths: &Paths) -> Result<Vec<ThreadSummary>> {
 }
 
 /// Reply to a received message, continuing its thread. Returns the wire
-/// `in_reply_to` (the original sender's message id) and thread context.
-pub fn reply_context(paths: &Paths, msg_key: &str) -> Result<(String, String, String)> {
+/// `in_reply_to` (the original sender's message id), thread context, and
+/// the original message's audience (so replies stay human-addressed when
+/// the original was).
+pub fn reply_context(paths: &Paths, msg_key: &str) -> Result<(String, String, String, Audience)> {
     let store = Store::open(paths)?;
     let original = store
         .get(msg_key)?
@@ -137,9 +155,14 @@ pub fn reply_context(paths: &Paths, msg_key: &str) -> Result<(String, String, St
     if original.direction != "in" {
         anyhow::bail!("can only reply to received messages");
     }
+    let audience = match original.audience.as_str() {
+        "human" => Audience::Human,
+        _ => Audience::Agent,
+    };
     Ok((
         original.from_id.clone(),
         original.thread_id.clone(),
         original.remote_id.clone(),
+        audience,
     ))
 }

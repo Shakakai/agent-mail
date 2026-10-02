@@ -38,6 +38,12 @@ NodeIds.
   `iroh-dns-server` or use explicit tickets on trusted networks.
 - QUIC send streams must be `finish()`ed explicitly; the framing layer does
   not do it for you.
+- **iroh refuses to dial your own NodeId** ("Connecting to ourself is not
+  supported"). Sends addressed to ourselves short-circuit: the message is
+  written straight into the local inbox (`ops::send_message`, CLI
+  send/reply, and the daemon's outbox retry all handle loopback), which is
+  also how the TUI and an agent on the same installation talk to each
+  other.
 
 
 ---
@@ -257,11 +263,16 @@ which recipients dedupe on `msg.id`.
 delivered until that peer comes online. agent-mail handles this with a
 persistent **outbox + retry**:
 
-1. `send` validates the allowlist, writes the message to the local outbox,
-   then attempts delivery.
+1. `send` validates the allowlist and the size limit (bodies must fit in
+   one wire frame, 1 MiB by default), writes the message to the local
+   outbox, then attempts delivery.
 2. On success (`ack`), the message moves to `sent`.
 3. On connection failure, the daemon retries with exponential backoff +
    jitter (30s → 15min cap). Messages survive daemon restarts.
+4. After 10 failed attempts the message is marked `failed` — it leaves the
+   retry loop but stays visible: `agent-mail outbox`, the TUI status bar
+   (`outbox:N (M failed)`), and the MCP `list_outbox` tool all surface it,
+   so exhaustion is never silent.
 4. `send --deadline <when>` can fail fast instead, for interactive use.
 
 **Optional extension — `mailbox` capability** (flagged in `hello.caps`):
@@ -334,6 +345,12 @@ as the CLI and MCP server.
 The MCP server is a thin adapter over the same core the CLI uses; it talks
 to the running daemon through the SQLite store + a local control socket, so
 an agent never holds network code or keys itself.
+
+The MCP server **embeds the daemon**: it starts in-process when the server
+starts and shuts down automatically when the stdio session ends. An agent's
+mail endpoint is therefore online exactly while its agent harness is
+connected — no separately managed daemon process is needed (a standalone
+`agent-mail daemon` remains available for always-on mail).
 
 ## Agent skills
 

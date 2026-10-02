@@ -26,6 +26,7 @@ use std::time::Duration;
 
 use crate::allowlist::{AllowList, PeerEntry};
 use crate::config::{Config, Paths};
+use crate::daemon;
 use crate::identity;
 use crate::ops;
 use crate::proto::Audience;
@@ -241,7 +242,7 @@ impl MailMcp {
         if p.body.trim().is_empty() {
             return Err(Self::bad_request("reply body is empty"));
         }
-        let (peer_id, thread_id, reply_to) =
+        let (peer_id, thread_id, reply_to, audience) =
             ops::reply_context(&self.paths, &p.msg_key).map_err(|e| Self::internal(format!("{e:#}")))?;
         let outcome = ops::send_message(
             &self.paths,
@@ -249,7 +250,7 @@ impl MailMcp {
             &self.secret_key,
             &self.me,
             &peer_id,
-            Audience::Agent,
+            audience,
             &p.body,
             Some(&thread_id),
             Some(&reply_to),
@@ -263,6 +264,18 @@ impl MailMcp {
     fn list_threads(&self) -> std::result::Result<String, ErrorData> {
         let threads = ops::list_threads(&self.paths).map_err(|e| Self::internal(format!("{e:#}")))?;
         Ok(Self::json(&threads))
+    }
+
+    #[tool(description = "List outgoing messages not yet confirmed delivered: queued (the daemon retries with backoff) and failed (gave up after 10 attempts). Includes per-message attempt counts so exhaustion is visible. Use this to check on mail you sent before ending a task.")]
+    fn list_outbox(&self) -> std::result::Result<String, ErrorData> {
+        let store = Store::open(&self.paths).map_err(|e| Self::internal(format!("{e:#}")))?;
+        let rows = store.list_outgoing().map_err(|e| Self::internal(format!("{e:#}")))?;
+        let (pending, failed) = store.outbox_counts();
+        Ok(Self::json(&serde_json::json!({
+            "pending": pending,
+            "failed": failed,
+            "messages": rows,
+        })))
     }
 }
 
@@ -452,9 +465,32 @@ async fn notify_inbox_subs(subs: &Subscriptions) {
 }
 
 pub async fn run(paths: Paths, config: Config) -> Result<()> {
-    let server = MailMcp::new(paths.clone(), config)?;
-    tokio::spawn(inbox_watcher(paths, server.subs.clone()));
+    let server = MailMcp::new(paths.clone(), config.clone())?;
+    tokio::spawn(inbox_watcher(paths.clone(), server.subs.clone()));
+
+    // Embed the mail daemon: it starts with the MCP server, so peers can
+    // reach us and the outbox drains whenever an agent is connected, and it
+    // shuts down automatically when the stdio session ends. A daemon
+    // failure is logged but does not kill the server — read/send tools that
+    // dial on demand keep working.
+    let daemon_shutdown = Arc::new(tokio::sync::Notify::new());
+    let daemon_task = {
+        let shutdown = daemon_shutdown.clone();
+        tokio::spawn(async move {
+            if let Err(e) = daemon::run_until(paths, config, shutdown).await {
+                tracing::error!("embedded daemon exited: {e:#}");
+            }
+        })
+    };
+
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
+
+    // Stdio closed: stop the daemon and give it a moment to close its
+    // endpoint cleanly before the process exits.
+    daemon_shutdown.notify_one();
+    if tokio::time::timeout(Duration::from_secs(5), daemon_task).await.is_err() {
+        tracing::warn!("embedded daemon did not shut down within 5s");
+    }
     Ok(())
 }

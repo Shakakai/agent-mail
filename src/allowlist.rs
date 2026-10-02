@@ -39,6 +39,18 @@ impl AllowList {
         }
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            // Tighten legacy installs: the trust list is security-critical.
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(path) {
+                let mut perms = meta.permissions();
+                if perms.mode() & 0o077 != 0 {
+                    perms.set_mode(0o600);
+                    let _ = std::fs::set_permissions(path, perms);
+                }
+            }
+        }
         let file: AllowListFile = toml::from_str(&text)
             .with_context(|| format!("parsing {}", path.display()))?;
         Ok(Self {
@@ -65,7 +77,19 @@ impl AllowList {
             peer: self.entries.clone(),
         };
         let text = toml::to_string_pretty(&file)?;
-        std::fs::write(&self.path, text).with_context(|| format!("writing {}", self.path.display()))
+        // Write-then-rename so a crash mid-write cannot leave a torn file:
+        // the daemon fails closed on a corrupt allowlist (rejects everyone).
+        let tmp = self.path.with_extension("tmp");
+        std::fs::write(&tmp, &text).with_context(|| format!("writing {}", tmp.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&tmp)?.permissions();
+            perms.set_mode(0o600);
+            std::fs::set_permissions(&tmp, perms)?;
+        }
+        std::fs::rename(&tmp, &self.path)
+            .with_context(|| format!("writing {}", self.path.display()))
     }
 
     pub fn contains(&self, id: &EndpointId) -> bool {
