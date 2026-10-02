@@ -1,11 +1,5 @@
 [tools]
 node = "22"
 
-[tasks.pi]
-description = "Run the pi coding agent with project environment loaded"
-dir = "{{ config_root }}"
-run = '''
-set -e
-source scripts/pi-env.sh
-pi
-'''
+# The `pi` task is defined as a standalone script at .mise/tasks/pi so that
+# arguments are forwarded to pi (e.g. `mise run pi -c`).
