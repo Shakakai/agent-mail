@@ -59,6 +59,16 @@ pub struct StoredMessage {
     pub attempts: u64,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ThreadSummary {
+    pub thread_id: String,
+    pub peer: String,
+    pub message_count: u64,
+    pub unread_count: u64,
+    pub last_body: String,
+    pub last_at: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct QueuedMessage {
     pub msg_key: String,
@@ -247,6 +257,35 @@ impl Store {
         } else {
             stmt.query_map(params![], map_stored)?
         };
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Conversation overview: one row per thread, most recent activity first.
+    pub fn list_threads(&self) -> Result<Vec<ThreadSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT thread_id, peer, COUNT(*),
+                    SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END),
+                    (SELECT body FROM messages m2
+                      WHERE m2.thread_id = messages.thread_id
+                      ORDER BY m2.created_at DESC LIMIT 1),
+                    MAX(received_at)
+             FROM messages
+             WHERE direction = 'in'
+             GROUP BY thread_id
+             ORDER BY MAX(received_at) DESC
+             LIMIT 200",
+        )?;
+        let rows = stmt.query_map(params![], |row| {
+            Ok(ThreadSummary {
+                thread_id: row.get(0)?,
+                peer: row.get(1)?,
+                message_count: row.get::<_, i64>(2)? as u64,
+                unread_count: row.get::<_, i64>(3)? as u64,
+                last_body: row.get(4)?,
+                last_at: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+            })
+        })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 

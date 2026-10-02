@@ -10,6 +10,8 @@ mod client;
 mod config;
 mod daemon;
 mod identity;
+mod mcp;
+mod ops;
 mod proto;
 mod store;
 mod util;

@@ -10,7 +10,7 @@ use crate::client;
 use crate::config::{Config, Paths};
 use crate::proto::Audience;
 use crate::store::Store;
-use crate::{daemon, identity};
+use crate::{daemon, identity, mcp};
 
 #[derive(Parser)]
 #[command(
@@ -36,6 +36,8 @@ enum Commands {
     },
     /// Run the mail daemon (receives mail, retries the outbox).
     Daemon,
+    /// Serve MCP over stdio (the agent interface).
+    Mcp,
     /// Send a message to an allowlisted peer.
     Send {
         /// Peer NodeId or allowlist name.
@@ -119,6 +121,7 @@ pub async fn run(paths: Paths) -> Result<()> {
         Commands::Id => cmd_id(&paths),
         Commands::Allow { action } => cmd_allow(&paths, action),
         Commands::Daemon => daemon::run(paths, config).await,
+        Commands::Mcp => mcp::run(paths, config).await,
         Commands::Send {
             peer,
             message,
@@ -126,7 +129,7 @@ pub async fn run(paths: Paths) -> Result<()> {
             ticket,
             audience,
             json,
-        } => cmd_send(&paths, &peer, &message, stdin, ticket.as_deref(), &audience, json).await,
+        } => cmd_send(&paths, &config, &peer, &message, stdin, ticket.as_deref(), &audience, json).await,
         Commands::Addr { json } => cmd_addr(&paths, json).await,
         Commands::Inbox { human, peer, json } => cmd_inbox(&paths, peer, human, json),
         Commands::Read { msg_key, json } => cmd_read(&paths, &msg_key, json),
@@ -135,7 +138,7 @@ pub async fn run(paths: Paths) -> Result<()> {
             message,
             stdin,
             json,
-        } => cmd_reply(&paths, &msg_key, &message, stdin, json).await,
+        } => cmd_reply(&paths, &config, &msg_key, &message, stdin, json).await,
     }
 }
 
@@ -255,6 +258,7 @@ fn resolve_peer(list: &AllowList, query: &str) -> Result<String> {
 
 async fn cmd_send(
     paths: &Paths,
+    config: &Config,
     peer: &str,
     message: &Option<String>,
     stdin: bool,
@@ -274,15 +278,6 @@ async fn cmd_send(
 
     let store = Store::open(paths)?;
     let thread_id = ulid::Ulid::generate().to_string();
-    let msg = store.enqueue_outgoing(
-        &me,
-        &peer_id,
-        &thread_id,
-        None,
-        audience,
-        "text/plain",
-        &body,
-    )?;
 
     let endpoint = Endpoint::builder(presets::N0)
         .secret_key(sk.clone())
@@ -296,27 +291,48 @@ async fn cmd_send(
             if addr.id.to_string() != peer_id {
                 bail!("ticket id does not match peer {peer_id}");
             }
-            client::deliver(&endpoint, addr, &msg).await
+            let msg = store.enqueue_outgoing(
+                &me,
+                &peer_id,
+                &thread_id,
+                None,
+                audience,
+                "text/plain",
+                &body,
+            )?;
+            let r = client::deliver(&endpoint, addr, &msg).await;
+            (r, msg.id)
         }
         None => {
-            client::deliver(
+            let msg = store.enqueue_outgoing(
+                &me,
+                &peer_id,
+                &thread_id,
+                None,
+                audience,
+                "text/plain",
+                &body,
+            )?;
+            let r = client::deliver(
                 &endpoint,
                 iroh::EndpointAddr::from(peer_id.parse::<iroh::EndpointId>()?),
                 &msg,
             )
-            .await
+            .await;
+            (r, msg.id)
         }
     };
     endpoint.close().await;
+    let (result, msg_key) = result;
 
     match result {
         Ok(received_at) => {
-            store.mark_delivered(&msg.id, received_at)?;
-            print_send_result(&msg.id, &peer_id, true, json);
+            store.mark_delivered(&msg_key, received_at)?;
+            print_send_result(&msg_key, &peer_id, true, json);
         }
         Err(e) => {
-            store.mark_retry(&msg.id, 0, 30, 900)?;
-            print_send_result(&msg.id, &peer_id, false, json);
+            store.mark_retry(&msg_key, 0, config.retry_base_secs, config.retry_max_secs)?;
+            print_send_result(&msg_key, &peer_id, false, json);
             eprintln!("note: queued for retry by the daemon ({e:#})");
         }
     }
@@ -392,6 +408,7 @@ fn cmd_read(paths: &Paths, msg_key: &str, json: bool) -> Result<()> {
 
 async fn cmd_reply(
     paths: &Paths,
+    config: &Config,
     msg_key: &str,
     message: &Option<String>,
     stdin: bool,
@@ -445,7 +462,7 @@ async fn cmd_reply(
             print_send_result(&msg.id, &peer_id, true, json);
         }
         Err(e) => {
-            store.mark_retry(&msg.id, 0, 30, 900)?;
+            store.mark_retry(&msg.id, 0, config.retry_base_secs, config.retry_max_secs)?;
             print_send_result(&msg.id, &peer_id, false, json);
             eprintln!("note: queued for retry by the daemon ({e:#})");
         }

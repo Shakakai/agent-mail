@@ -55,6 +55,8 @@ pub struct Config {
     pub retry_max_secs: u64,
     /// How often the daemon scans the outbox (default 15s).
     pub daemon_tick_secs: u64,
+    /// Whether the MCP server may modify the trust list (default false).
+    pub mcp_allow_trust_changes: bool,
 }
 
 impl Default for Config {
@@ -64,6 +66,7 @@ impl Default for Config {
             retry_base_secs: 30,
             retry_max_secs: 900,
             daemon_tick_secs: 15,
+            mcp_allow_trust_changes: false,
         }
     }
 }
@@ -75,6 +78,7 @@ struct ConfigFile {
     retry_base_secs: u64,
     retry_max_secs: u64,
     daemon_tick_secs: u64,
+    mcp_allow_trust_changes: bool,
 }
 
 impl Default for ConfigFile {
@@ -85,6 +89,7 @@ impl Default for ConfigFile {
             retry_base_secs: c.retry_base_secs,
             retry_max_secs: c.retry_max_secs,
             daemon_tick_secs: c.daemon_tick_secs,
+            mcp_allow_trust_changes: false,
         }
     }
 }
@@ -104,6 +109,7 @@ impl Config {
             retry_base_secs: file.retry_base_secs,
             retry_max_secs: file.retry_max_secs,
             daemon_tick_secs: file.daemon_tick_secs,
+            mcp_allow_trust_changes: file.mcp_allow_trust_changes,
         })
     }
 }

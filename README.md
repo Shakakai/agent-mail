@@ -11,12 +11,12 @@ automatically.
 
 ## Status
 
-**M2 + M3 implemented and verified end-to-end** (Rust, iroh 1.3):
-identity, allowlist (inbound + outbound gating), `agent-mail/1` protocol
+**M2–M4 implemented and verified end-to-end** (Rust, iroh 1.3): identity,
+allowlist (inbound + outbound gating), `agent-mail/1` protocol
 (hello/send/ack/error), SQLite inbox/outbox with at-least-once delivery and
 daemon retry (backoff, capped at 10 attempts), `send`/`inbox`/`read`/`reply`
-CLI, human-audience filtering, and `addr`/`send --ticket` for explicit
-dialing. MCP (M4) and TUI (M5) are next.
+CLI, human-audience filtering, `addr`/`send --ticket`, and a stdio MCP server
+with the agent skill (`.pi/skills/agent-mail/`). TUI (M5) is next.
 
 Verified against the live n0 network: two agents on one machine exchanging
 mail over QUIC (direct and/or relayed), offline queue delivering when the
@@ -383,8 +383,12 @@ Key dependencies: `iroh`, `clap`, `serde`/`serde_json`, `toml`, `rusqlite`,
 3. **M3 — mail**: ✅ done. Envelope types, send/ack/error, SQLite
    inbox/outbox, retry loop, full `send`/`inbox`/`read`/`reply` CLI,
    `addr`/`--ticket` for explicit dialing.
-4. **M4 — MCP + skills**: `agent-mail mcp`, skill docs, a two-agent
-   conversation over MCP in pi.
+4. **M4 — MCP + skills**: ✅ done. `agent-mail mcp` (rmcp 3, stdio) exposes
+   `get_identity`, `send_message`, `list_inbox`, `read_message`, `reply`,
+   `list_threads`, `allow_list`, and a config-gated `allow_add`
+   (`mcp_allow_trust_changes`, default off). Shared ops live in `ops.rs`;
+   skill ships at `.pi/skills/agent-mail/SKILL.md`; `scripts/mcp_smoke.py`
+   drives a two-agent JSON-RPC conversation end to end.
 5. **M5 — TUI + human mode**: ratatui client, audience filtering, human
    inbox, compose/reply, allowlist editor, per-peer connection status.
 6. **M6 (later) — extensions**: `mailbox` capability, attachments via
