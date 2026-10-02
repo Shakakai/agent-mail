@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Patterns — agent-mail</title>
 <meta name="description" content="Architecture patterns for agent-mail: the manager pattern, mailbox-driven agents, fleet topologies, and the authority model.">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 
@@ -30,6 +30,44 @@
   <p class="subtitle">
     agent-mail is a primitive; these are proven ways to compose it. Everything below is
     copy-pasteable — identities, allowlists, and the exact prompt text your harness needs.
+  </p>
+
+
+  <h2 id="watch">Watch it work</h2>
+  <p>
+    Real CLI sessions, simulated. These are the actual commands and tool calls — the
+    same ones from the <a href="quickstart.html">quickstart</a> — played back on a
+    loop. <code>&#8987;</code> marks where the machine changes.
+  </p>
+
+  <h3>Agent &#8594; agent: delegate a task, get data back</h3>
+    <div class="term-demo" data-demo="a2a">
+      <div class="term-head">
+        <span class="term-title">AGENT &rarr; AGENT · DELEGATE &amp; DELIVER</span>
+        <button type="button" class="term-replay">&#8635; replay</button>
+      </div>
+      <pre class="term-body" aria-live="polite"></pre>
+      <script type="application/json" class="demo-script">[{"t": "scene", "s": "\u00b7 \u00b7 \u00b7 your laptop \u2014 the manager agent \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agent-mail --home ~/mail-manager send research \\\n  -m \"Survey A2A messaging protocols; attach the comparison.\" \\\n  --attach brief.md"}, {"t": "packet", "to": "f672\u20261c55 \u00b7 QUIC, direct path"}, {"t": "out", "s": "delivered to f672\u20261c55 (msg 01H4X9T\u2026)"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 the research VM (a different machine, a different network) \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agent-mail --home ~/mail-research inbox"}, {"t": "out", "s": "* 01H4X9T  7a3f\u2026b291  1s ago  Survey A2A messaging protocols\u2026"}, {"t": "cmd", "s": "agent-mail --home ~/mail-research reply 01H4X9T \\\n  -m \"Done \u2014 6 protocols compared. agent-mail/3 is the simplest.\" \\\n  --attach comparison.csv"}, {"t": "packet", "to": "7a3f\u2026b291 \u00b7 QUIC, relay fallback"}, {"t": "out", "s": "delivered to 7a3f\u2026b291 (msg 01H4Y2K\u2026)"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 back on your laptop \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agent-mail --home ~/mail-manager read 01H4Y2K"}, {"t": "out", "s": "from:   f672\u20261c55\nattach: comparison.csv (14.2 KiB, text/csv)\nbody:   Done \u2014 6 protocols compared. agent-mail/3 is the simplest."}, {"t": "wire", "s": "\u2014 the wire, for the curious \u2014\n{\"v\":3,\"type\":\"send\",\"msg\":{\"id\":\"01H4Y2K\u2026\",\n \"from\":\"f672\u20261c55\",\"to\":\"7a3f\u2026b291\",\"thread_id\":\"01H4X9T\u2026\",\n \"in_reply_to\":\"01H4X9T\u2026\",\"attachments\":[{\"name\":\"comparison.csv\",\"size\":14539}]}}"}]</script>
+    </div>
+  <p class="demo-caption">
+    A manager on your laptop tasks a research agent on a cloud VM. The reply returns on
+    the same thread with the data attached. Different networks, no servers, no VPN —
+    the only exchanged secret is a public key.
+  </p>
+
+  <h3>Human &#8594; agent: your Pi's mailbox loop</h3>
+    <div class="term-demo" data-demo="h2a">
+      <div class="term-head">
+        <span class="term-title">HUMAN &rarr; AGENT · MAILBOX LOOP</span>
+        <button type="button" class="term-replay">&#8635; replay</button>
+      </div>
+      <pre class="term-body" aria-live="polite"></pre>
+      <script type="application/json" class="demo-script">[{"t": "scene", "s": "\u00b7 \u00b7 \u00b7 you, from your own mailbox \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agent-mail --home ~/mail-human send pi \\\n  -m \"Where are we on the migration?\""}, {"t": "packet", "to": "7a3f\u2026b291 \u00b7 your Pi agent"}, {"t": "out", "s": "delivered to 7a3f\u2026b291 (msg 01H5B1M\u2026)"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 your Pi agent, idle \u2014 standing instruction: check the mail \u00b7 \u00b7 \u00b7"}, {"t": "agent", "s": "list_inbox(unread_only: true)"}, {"t": "out", "s": "\u2192 1 unread \u2014 from c0ff\u2026ee42 (human): \"Where are we on the migration?\""}, {"t": "agent", "s": "read_message(\"01H5B1M\u2026\")"}, {"t": "out", "s": "\u00b7 marked read"}, {"t": "agent", "s": "reply(\"01H5B1M\u2026\", \"3 of 5 workers done. ETA tomorrow 9am.\")"}, {"t": "packet", "to": "c0ff\u2026ee42 \u00b7 back to you"}, {"t": "out", "s": "{\"status\": \"delivered\", \"msg_key\": \"01H5B3Q\u2026\"}"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 you again \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agent-mail --home ~/mail-human inbox"}, {"t": "out", "s": "* 01H5B3Q  7a3f\u2026b291  just now  3 of 5 workers done. ETA tomorrow 9am."}, {"t": "wire", "s": "\u2014 one protocol, two readers: the same thread in your TUI\n  and in your agent's tools. no shared accounts, no special cases."}]</script>
+    </div>
+  <p class="demo-caption">
+    You mail your Pi agent from your own mailbox; its standing instruction is to check
+    mail when idle. You read the answer in your TUI — one protocol, two readers, zero
+    shared accounts.
   </p>
 
   <h2 id="manager">The manager pattern: one agent, sub-agents anywhere</h2>
@@ -166,7 +204,7 @@ agent-mail --home ~/mail-manager allow add &lt;scout-node-id&gt; --name scout
   <a href="iroh.html">next: how IROH moves the bytes</a>
 </footer>
 
-<script src="site.js?v=7" defer></script>
+<script src="site.js?v=8" defer></script>
 
 </body>
 </html>

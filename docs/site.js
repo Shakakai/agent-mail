@@ -130,3 +130,69 @@ document.querySelectorAll('[data-install-switcher]').forEach((box) => {
         .then((rel) => slots.forEach((s) => { s.textContent = rel.tag_name; }))
         .catch(() => {});
 })();
+
+// Simulated CLI session cards: type out real agent-mail workflows.
+(function () {
+    const demos = document.querySelectorAll('.term-demo');
+    if (!demos.length) return;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const wait = (ms) => new Promise((r) => setTimeout(r, reduced ? 0 : ms));
+
+    async function run(demo) {
+        const body = demo.querySelector('.term-body');
+        const script = JSON.parse(demo.querySelector('.demo-script').textContent);
+        body.innerHTML = '';
+        for (const step of script) {
+            if (step.t === 'scene') {
+                const el = document.createElement('span');
+                el.className = 'scene';
+                el.textContent = step.s;
+                body.appendChild(el);
+                await wait(650);
+            } else if (step.t === 'cmd' || step.t === 'agent') {
+                const line = document.createElement('span');
+                const pr = document.createElement('span');
+                pr.className = 'p' + (step.t === 'agent' ? ' agentp' : '');
+                pr.textContent = step.t === 'agent' ? 'pi › ' : '$ ';
+                const txt = document.createElement('span');
+                const cur = document.createElement('span');
+                cur.className = 'cursor';
+                line.append(pr, txt, cur);
+                body.appendChild(line);
+                for (const ch of step.s) {
+                    txt.textContent += ch;
+                    if (!reduced) await wait('{}[]()<>|/'.includes(ch) ? 30 : 12);
+                }
+                cur.remove();
+                await wait(240);
+            } else if (step.t === 'out' || step.t === 'wire') {
+                const el = document.createElement('span');
+                el.className = step.t;
+                el.textContent = step.s;
+                body.appendChild(el);
+                await wait(step.t === 'wire' ? 500 : 220);
+            } else if (step.t === 'packet') {
+                const line = document.createElement('span');
+                line.className = 'pkt';
+                const g = document.createElement('span');
+                g.className = 'pkt-glyph';
+                g.textContent = '✉ ';
+                line.append(g, document.createTextNode('· · · · · · · · · · · · · ▸ ' + step.to));
+                body.appendChild(line);
+                await wait(reduced ? 120 : 1150);
+            }
+            body.scrollTop = body.scrollHeight;
+        }
+    }
+
+    const io = new IntersectionObserver((entries) => {
+        entries.forEach((e) => {
+            if (e.isIntersecting) { io.unobserve(e.target); run(e.target); }
+        });
+    }, { threshold: 0.35 });
+    demos.forEach((d) => {
+        io.observe(d);
+        const rb = d.querySelector('.term-replay');
+        if (rb) rb.addEventListener('click', () => run(d));
+    });
+})();

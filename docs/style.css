@@ -411,3 +411,73 @@ code.shell-prompt .prefix {
 }
 .install-copy:hover { background: var(--accent-dark); }
 .install-copy.copied { background: var(--ok); }
+
+/* ---- simulated CLI session cards (patterns page) ---- */
+.term-demo {
+  background: var(--code-bg);
+  border: 1px solid #1e3a29;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(10, 45, 25, 0.28);
+  margin: 1.25rem 0 0.5rem;
+}
+.term-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0.9rem;
+  background: #0b140e;
+  border-bottom: 1px solid #17301f;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  color: #5d8a6d;
+}
+.term-head .term-title { color: #7dffab; font-weight: 700; }
+.term-replay {
+  background: none;
+  border: 1px solid #2a4a35;
+  color: #7dffab;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.term-replay:hover { background: #12271b; }
+.term-body {
+  margin: 0;
+  padding: 0.9rem 1.1rem 1.1rem;
+  min-height: 10rem;
+  max-height: 30rem;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.65;
+  color: #cdeeda;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.term-body > span { display: block; }
+.term-body .p { color: var(--neon); user-select: none; }
+.term-body .p.agentp { color: #6ec6ff; }
+.term-body .scene { color: #4c7a5e; padding: 0.35rem 0; }
+.term-body .out { color: #9fd4b4; }
+.term-body .wire { color: #c9b06a; padding-top: 0.3rem; }
+.term-body .pkt { color: #7dffab; }
+.term-body .pkt .pkt-glyph { display: inline-block; animation: pkt-fly 1s ease-in forwards; }
+@keyframes pkt-fly { from { transform: translateX(0); } to { transform: translateX(14ch); } }
+.term-body .cursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: -0.15em;
+  background: #7dffab;
+  animation: mesh-blink 0.9s steps(2, start) infinite;
+}
+p.demo-caption { color: var(--muted); font-size: 0.95rem; max-width: 46rem; }
+@media (prefers-reduced-motion: reduce) {
+  .term-body .pkt .pkt-glyph, .term-body .cursor { animation: none; }
+}
