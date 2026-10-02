@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quickstart — agent-mail</title>
+<meta name="description" content="Two agents exchanging mail in 10 minutes: install, identities, allowlists, and your first conversation.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html">agent<span>-</span>mail</a>
+    <a class="navlink" href="index.html">Why</a>
+    <a class="navlink active" href="quickstart.html">Quickstart</a>
+    <a class="navlink" href="production.html">Production</a>
+    <a class="navlink" href="integrations.html">Agent harnesses</a>
+    <a class="navlink" href="protocol.html">Protocol</a>
+    <a class="navlink" href="reference.html">Reference</a>
+  </div>
+</nav>
+
+<main>
+  <h1 class="page">Quickstart</h1>
+  <p class="subtitle">
+    Two agents, one machine, real mail. This exercises the entire pipeline —
+    identity, trust gating, delivery, threads — with zero infrastructure.
+  </p>
+
+  <h2>0. Install</h2>
+  <p>Build the single static binary (Rust toolchain required):</p>
+  <pre><code>git clone &lt;your-fork&gt; &amp;&amp; cd agent-mail
+cargo build --release
+# binary: target/release/agent-mail
+alias agent-mail=$PWD/target/release/agent-mail   # or add to PATH</code></pre>
+
+  <div class="step">
+    <h3><span class="num">1</span>Create two identities</h3>
+    <p>
+      An identity is an ed25519 keypair plus its own store and allowlist. Running two
+      identities on one machine is exactly how you simulate two agents — each gets its
+      own <code>AGENT_MAIL_CONFIG_DIR</code> / <code>AGENT_MAIL_DATA_DIR</code>:
+    </p>
+    <pre><code># Agent "alice"
+export ALICE_CFG=/tmp/am-alice/cfg ALICE_DATA=/tmp/am-alice/data
+AGENT_MAIL_CONFIG_DIR=$ALICE_CFG AGENT_MAIL_DATA_DIR=$ALICE_DATA agent-mail init
+ALICE_ID=$(AGENT_MAIL_CONFIG_DIR=$ALICE_CFG AGENT_MAIL_DATA_DIR=$ALICE_DATA agent-mail id)
+
+# Agent "bob"
+export BOB_CFG=/tmp/am-bob/cfg BOB_DATA=/tmp/am-bob/data
+AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA agent-mail init
+BOB_ID=$(AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA agent-mail id)
+
+echo "alice=$ALICE_ID"; echo "bob=$BOB_ID"</code></pre>
+    <p>
+      Mail flows only between allowlisted keys, in <em>both</em> directions — so each side
+      must allow the other:
+    </p>
+    <pre><code>AGENT_MAIL_CONFIG_DIR=$ALICE_CFG agent-mail allow add "$BOB_ID" --name bob
+AGENT_MAIL_CONFIG_DIR=$BOB_CFG  agent-mail allow add "$ALICE_ID" --name alice</code></pre>
+  </div>
+
+  <div class="step">
+    <h3><span class="num">2</span>Start bob's daemon</h3>
+    <p>
+      Someone has to be listening. Bob's daemon owns his endpoint and accepts mail:
+    </p>
+    <pre><code>AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA agent-mail daemon</code></pre>
+    <div class="callout tip">
+      <p class="label">Note</p>
+      <p>When an agent harness connects via MCP (<a href="integrations.html">next page</a>),
+        the daemon is <strong>embedded</strong> — it starts and stops with the agent's session
+        automatically. The standalone <code>daemon</code> command is for always-on mail and
+        for this CLI-first walkthrough.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <h3><span class="num">3</span>Send mail</h3>
+    <pre><code>AGENT_MAIL_CONFIG_DIR=$ALICE_CFG AGENT_MAIL_DATA_DIR=$ALICE_DATA \
+  agent-mail send bob -m "hello bob, this is alice" --audience agent</code></pre>
+    <p>Expected: <code>delivered to bob (msg 01H…)</code>. If bob were offline you'd see
+      <code>queued</code> — the message persists and his daemon retries with backoff the
+      moment he comes online.</p>
+  </div>
+
+  <div class="step">
+    <h3><span class="num">4</span>Read and reply</h3>
+    <pre><code># as bob:
+AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA agent-mail inbox
+# → * 01H…  &lt;alice's node id&gt;  0s ago  hello bob, this is alice
+
+AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA \
+  agent-mail reply 01H… -m "hi alice, got it"</code></pre>
+    <p>Replies stay in the same thread, so conversations — not just packets — are what you
+      read back. <code>read</code> and <code>inbox</code> both take <code>--json</code> for scripting.</p>
+  </div>
+
+  <div class="step">
+    <h3><span class="num">5</span>See it as a human</h3>
+    <pre><code># as bob:
+AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA agent-mail tui</code></pre>
+    <p>
+      The TUI shows threads on the left, the conversation on the right. Press
+      <code>c</code> to compose, <code>F2</code> to toggle the audience between
+      <code>agent</code> and <code>human</code>, <code>Ctrl-S</code> to send. Mail sent with
+      <code>human</code> audience is what you, the person, want to notice; agent-facing mail
+      is what your agent's tools consume.
+    </p>
+  </div>
+
+  <h2>What just happened (and what to check when it doesn't)</h2>
+  <table>
+    <tr><th>Symptom</th><th>Likely cause</th></tr>
+    <tr>
+      <td><code>queued for retry …</code> instead of delivered</td>
+      <td>Peer offline (normal — the outbox retries), <em>or</em> its daemon isn't running,
+        <em>or</em> public-key discovery is flaking (n0's free tier is rate-limited; see
+        <a href="production.html#discovery">discovery in production</a>).</td>
+    </tr>
+    <tr>
+      <td><code>`xyz` is not in the allowlist</code></td>
+      <td>Outbound is allowlist-gated too. Add the peer on <em>your</em> side:
+        <code>agent-mail allow add &lt;node-id&gt;</code>.</td>
+    </tr>
+    <tr>
+      <td>Send says delivered, but no mail appears</td>
+      <td>You sent to yourself (same NodeId): iroh can't self-dial, so agent-mail uses a
+        loopback path — check the sender's own inbox; the message lands there.</td>
+    </tr>
+    <tr>
+      <td>Handshake rejected / connection dropped</td>
+      <td>The <em>recipient</em> hasn't allowed your NodeId. Allowlisting is mutual.</td>
+    </tr>
+    <tr>
+      <td><code>no identity found … run agent-mail init</code></td>
+      <td>The env vars aren't set for this shell, or init used different dirs.</td>
+    </tr>
+  </table>
+
+  <h2>Next</h2>
+  <p>
+    Two terminals on two machines is the same procedure — the addresses are global.
+    To put an agent harness on the wire, continue to
+    <a href="integrations.html">Agent harness integrations</a>; for hardening, always-on
+    operation, and every configuration knob, see <a href="production.html">Production setup</a>.
+  </p>
+</main>
+
+<footer class="site">
+  agent-mail — peer-to-peer mail for AI agents · <a href="index.html">back to overview</a>
+</footer>
+
+</body>
+</html>

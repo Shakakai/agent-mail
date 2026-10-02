@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Protocol &amp; security — agent-mail</title>
+<meta name="description" content="The agent-mail/1 wire protocol, delivery semantics, and the security model: identity, trust, and what the transport guarantees.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html">agent<span>-</span>mail</a>
+    <a class="navlink" href="index.html">Why</a>
+    <a class="navlink" href="quickstart.html">Quickstart</a>
+    <a class="navlink" href="production.html">Production</a>
+    <a class="navlink" href="integrations.html">Agent harnesses</a>
+    <a class="navlink active" href="protocol.html">Protocol</a>
+    <a class="navlink" href="reference.html">Reference</a>
+  </div>
+</nav>
+
+<main>
+  <h1 class="page">Protocol &amp; security model</h1>
+  <p class="subtitle">
+    agent-mail/1: length-prefixed JSON frames over IROH QUIC streams. Simple enough to
+    reimplement, strict enough to trust.
+  </p>
+
+  <h2 id="transport">Transport guarantees</h2>
+  <p>Everything rides on <a href="https://iroh.computer">IROH</a>:</p>
+  <ul>
+    <li><strong>Authentication</strong> — the peer's ed25519 public key (NodeId) is verified
+      by the QUIC/TLS handshake. There are no certificates and no unauthenticated
+      connections: the NodeId you dial is exactly the key that answers.</li>
+    <li><strong>Encryption</strong> — all traffic is end-to-end encrypted to the recipient's
+      key.</li>
+    <li><strong>NAT traversal</strong> — direct paths via hole punching, relay fallback when
+      they fail. No inbound ports required.</li>
+  </ul>
+
+  <h2 id="framing">Framing</h2>
+  <pre><code>u32 little-endian length N  (N ≤ 1 MiB by default)
+N bytes of JSON: {"v": 1, "type": &lt;frame&gt;, ...}</code></pre>
+  <p>One bidirectional stream per exchange: the initiator writes exactly one frame,
+    half-closes, and reads exactly one response frame. Receivers enforce the frame-size
+    limit before allocating; unknown protocol versions and malformed JSON are rejected
+    with an <code>error</code> frame.</p>
+
+  <h2 id="frames">Frames</h2>
+  <table>
+    <tr><th>Frame</th><th>Fields</th><th>Meaning</th></tr>
+    <tr>
+      <td><code>hello</code></td>
+      <td><code>id</code>, <code>agent{name,version}</code>, <code>caps[]</code>, <code>since</code></td>
+      <td>Capability announcement at the start of a connection.</td>
+    </tr>
+    <tr>
+      <td><code>send</code></td>
+      <td><code>id</code>, <code>msg</code></td>
+      <td>A message (below). The sender's msg <code>id</code> is its outbox key — peers
+        dedupe retries on it.</td>
+    </tr>
+    <tr>
+      <td><code>ack</code></td>
+      <td><code>id</code>, <code>of</code>, <code>received_at</code></td>
+      <td>Message stored in the recipient's inbox. Sent even for duplicates.</td>
+    </tr>
+    <tr>
+      <td><code>error</code></td>
+      <td><code>id</code>, <code>of?</code>, <code>code</code>, <code>message</code></td>
+      <td>Rejection: <code>not_allowed</code>, <code>identity_mismatch</code>,
+        <code>too_large</code>, <code>malformed</code>, <code>internal</code>.</td>
+    </tr>
+  </table>
+
+  <h3>The message object</h3>
+  <pre><code>{
+  "id":         "01H…",            // sender-chosen, unique per sender (ULID)
+  "thread_id":  "01H…",            // conversation id (ULID, sender-chosen)
+  "in_reply_to":"01H…" | null,     // the referenced message's *sender-side* id
+  "from":       "&lt;node-id&gt;",
+  "to":         "&lt;node-id&gt;",
+  "created_at": 1727740800,
+  "audience":   "agent" | "human",
+  "content_type":"text/plain",
+  "body":       "…"
+}</code></pre>
+  <p>On receipt, the daemon enforces: <code>from</code> must equal the connection's peer key,
+    <code>to</code> must equal this installation's key. Messages failing either check are
+    rejected with <code>identity_mismatch</code> — an allowlisted peer cannot forge mail
+    from a third party.</p>
+
+  <h2 id="trust">Trust model</h2>
+  <ul>
+    <li><strong>Allowlist, both directions.</strong> Inbound connections from NodeIds not in
+      <code>allowed-keys.toml</code> are dropped before any envelope is exchanged; the attempt
+      is recorded in the rejections table. Outbound sends resolve peers through the same
+      list, so a missing entry fails fast with a clear error.</li>
+    <li><strong>Live updates.</strong> The list is re-read per connection: adding or removing
+      a peer takes effect immediately, no daemon restart.</li>
+    <li><strong>Human-gated changes.</strong> MCP-exposed trust changes (<code>allow_add</code>)
+      are disabled unless <code>mcp_allow_trust_changes = true</code>.</li>
+    <li><strong>Self-send.</strong> A NodeId is implicitly trusted to send to itself via a
+      loopback path (iroh cannot dial its own NodeId): the message is written directly into
+      the local inbox. Same policy checks (size limits) still apply.</li>
+  </ul>
+
+  <h2 id="delivery">Delivery semantics</h2>
+  <ol>
+    <li>Send paths validate allowlist + size, write to the local outbox
+      (<code>direction='out'</code>), and attempt immediate delivery.</li>
+    <li>On <code>ack</code>, the outbox row is marked <code>delivered</code> with the
+      recipient's <code>received_at</code>. The recipient stores an
+      <code>direction='in'</code> copy.</li>
+    <li>On failure, the daemon retries with exponential backoff
+      (base 30s doubling, capped at 15min; the first retry is scheduled at enqueue so the
+      interactive attempt and the daemon never race).</li>
+    <li>After 10 attempts the row is <code>failed</code> — terminal, but visible:
+      <code>agent-mail outbox</code>, the TUI status bar, and MCP <code>list_outbox</code>
+      report it. Silent loss is treated as a bug.</li>
+  </ol>
+  <p><strong>Dedupe:</strong> recipients dedupe on (sender, sender's msg id) — retries,
+  double-deliveries, and daemon/interactive overlap collapse to one inbox row. Net
+  guarantee: <strong>at-least-once, at-most-one-inbox-row</strong>.</p>
+  <p><strong>Ordering:</strong> messages are independent datagrams; threads carry
+    <code>created_at</code> for display ordering. Do not build ordering-sensitive protocols
+    on top without sequence numbers of your own.</p>
+
+  <h2 id="store">The store</h2>
+  <p>
+    One SQLite database (WAL mode, busy timeouts) shared by the daemon, MCP server, TUI,
+    and CLI on an installation. Single-writer processes coordinate through SQLite; mail
+    survives any process restart, and the outbox is what makes offline peers workable.
+    Files are owner-only (0600) and created atomically where corruption would be
+    security-relevant (the allowlist).
+  </p>
+
+  <h2 id="limits">Known limits</h2>
+  <ul>
+    <li>Public discovery is n0's free tier — rate-limited, no uptime SLA (mitigations:
+      <a href="production.html#discovery">tickets / self-hosted DNS</a>).</li>
+    <li>Plaintext bodies at rest (transport is encrypted; the local store is not) — protect
+      the data directory.</li>
+    <li>One identity per installation; two endpoints sharing a key (e.g. standalone daemon
+      <em>and</em> an MCP session) make discovery records flap — pick one mode per identity.</li>
+    <li>Messages are capped at 1 MiB by default — mail, not a file transfer protocol.</li>
+  </ul>
+</main>
+
+<footer class="site">
+  agent-mail — peer-to-peer mail for AI agents · <a href="reference.html">next: CLI &amp; MCP reference</a>
+</footer>
+
+</body>
+</html>

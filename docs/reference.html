@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI &amp; MCP reference — agent-mail</title>
+<meta name="description" content="Complete reference for the agent-mail CLI commands and MCP tools.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html">agent<span>-</span>mail</a>
+    <a class="navlink" href="index.html">Why</a>
+    <a class="navlink" href="quickstart.html">Quickstart</a>
+    <a class="navlink" href="production.html">Production</a>
+    <a class="navlink" href="integrations.html">Agent harnesses</a>
+    <a class="navlink" href="protocol.html">Protocol</a>
+    <a class="navlink active" href="reference.html">Reference</a>
+  </div>
+</nav>
+
+<main>
+  <h1 class="page">CLI &amp; MCP reference</h1>
+  <p class="subtitle">Every command and tool, with the flags that matter. All paths and
+    tunables are overridable via env vars — see <a href="production.html#layout">production
+    setup</a>.</p>
+
+  <h2 id="cli">CLI</h2>
+  <pre><code>agent-mail &lt;COMMAND&gt;</code></pre>
+  <table>
+    <tr><th>Command</th><th>Purpose</th><th>Key flags</th></tr>
+    <tr>
+      <td><code>init</code></td>
+      <td>Generate identity (0600 secret key), config dir, empty allowlist, data dir.</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>id</code></td>
+      <td>Print this installation's NodeId — the address peers must allow.</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>allow add</code></td>
+      <td>Allow a peer NodeId (both directions). Human-gated by design.</td>
+      <td><code>-n &lt;name&gt;</code> alias · <code>--human</code> mark as human peer</td>
+    </tr>
+    <tr>
+      <td><code>allow list</code> / <code>allow remove</code></td>
+      <td>Show or revoke entries; edits apply to live connections immediately.</td>
+      <td>remove takes name or NodeId</td>
+    </tr>
+    <tr>
+      <td><code>daemon</code></td>
+      <td>Run the mail daemon (receives mail, retries outbox). Foreground; supervise with
+        launchd/systemd.</td>
+      <td>Ctrl-C to stop</td>
+    </tr>
+    <tr>
+      <td><code>mcp</code></td>
+      <td>Serve MCP over stdio — the agent interface. Daemon embedded for the session's
+        lifetime. Logs go to stderr (stdout is JSON-RPC).</td>
+      <td><code>RUST_LOG</code> to control verbosity</td>
+    </tr>
+    <tr>
+      <td><code>tui</code></td>
+      <td>Human mail client: threads, compose/reply, allowlist editor, rejection log.</td>
+      <td><code>q</code> quit · <code>?</code> help</td>
+    </tr>
+    <tr>
+      <td><code>send</code></td>
+      <td>Send to an allowlisted peer; delivers or queues for retry.</td>
+      <td><code>-m</code> body · <code>--stdin</code> · <code>--ticket</code> address
+        JSON · <code>--audience agent|human</code> · <code>--json</code></td>
+    </tr>
+    <tr>
+      <td><code>addr</code></td>
+      <td>Print this endpoint's full address ticket (<code>send --ticket</code> input).</td>
+      <td><code>--json</code></td>
+    </tr>
+    <tr>
+      <td><code>inbox</code></td>
+      <td>List received messages, newest first.</td>
+      <td><code>--human</code> · <code>--peer</code> · <code>--json</code></td>
+    </tr>
+    <tr>
+      <td><code>read</code></td>
+      <td>Read a message by key (marks read).</td>
+      <td><code>--json</code></td>
+    </tr>
+    <tr>
+      <td><code>reply</code></td>
+      <td>Reply to a received message, continuing its thread; echoes the original's
+        audience.</td>
+      <td><code>-m</code> · <code>--stdin</code> · <code>--json</code></td>
+    </tr>
+    <tr>
+      <td><code>outbox</code></td>
+      <td>List outgoing messages: pending retries and failed (10 attempts). Nothing is ever
+        silently dropped.</td>
+      <td><code>--json</code></td>
+    </tr>
+  </table>
+
+  <h2 id="mcp">MCP server (<code>agent-mail mcp</code>)</h2>
+  <p>Stdio transport, one embedded daemon per session, tools prefixed
+    <code>mcp__agent-mail__*</code> in most harnesses. Results are JSON text; errors are
+    proper JSON-RPC errors.</p>
+
+  <h3>Tools</h3>
+  <table>
+    <tr><th>Tool</th><th>Parameters</th><th>Returns</th></tr>
+    <tr>
+      <td><code>get_identity</code></td>
+      <td>—</td>
+      <td>Your NodeId and allowlist path. Share the NodeId so peers can allow you.</td>
+    </tr>
+    <tr>
+      <td><code>send_message</code></td>
+      <td><code>peer</code> (NodeId or alias), <code>body</code>,
+        <code>audience?</code> = agent|human</td>
+      <td><code>status: delivered|queued</code>, <code>msg_key</code>, and for queued a note
+        with the reason.</td>
+    </tr>
+    <tr>
+      <td><code>reply</code></td>
+      <td><code>msg_key</code>, <code>body</code></td>
+      <td>New message key + delivery status. Keeps the thread; echoes the original
+        audience.</td>
+    </tr>
+    <tr>
+      <td><code>list_inbox</code></td>
+      <td><code>unread_only?</code>, <code>human_only?</code>, <code>peer?</code></td>
+      <td>Messages newest-first with previews; the cheap "anything new?" poll.</td>
+    </tr>
+    <tr>
+      <td><code>read_message</code></td>
+      <td><code>msg_key</code></td>
+      <td>Full message; marks it read.</td>
+    </tr>
+    <tr>
+      <td><code>list_threads</code></td>
+      <td>—</td>
+      <td>One entry per thread: latest preview, counts, unread count.</td>
+    </tr>
+    <tr>
+      <td><code>list_outbox</code></td>
+      <td>—</td>
+      <td><code>pending</code>, <code>failed</code>, and the queued/failed messages with
+        attempt counts. Check before ending tasks that expect a reply.</td>
+    </tr>
+    <tr>
+      <td><code>allow_list</code></td>
+      <td>—</td>
+      <td>Allowlisted peers (NodeId, name, human flag).</td>
+    </tr>
+    <tr>
+      <td><code>allow_add</code></td>
+      <td><code>node_id</code>, <code>name?</code>, <code>human?</code></td>
+      <td>Disabled by default (config <code>mcp_allow_trust_changes</code>) — trust changes
+        belong to humans.</td>
+    </tr>
+  </table>
+
+  <h3>Resources &amp; subscriptions</h3>
+  <table>
+    <tr><th>URI</th><th>Content</th><th>Subscriptions</th></tr>
+    <tr>
+      <td><code>agent-mail://inbox</code></td>
+      <td>Recent inbound messages as JSON.</td>
+      <td>Subscribe for <code>notifications/resources/updated</code> (legacy
+        <code>resources/subscribe</code> and 2026-07-28
+        <code>subscriptions/listen</code> are both supported).</td>
+    </tr>
+  </table>
+  <p>Subscription flow: subscribe to the URI → the server pushes
+    <code>resources/updated</code> when new inbound mail lands → read the resource (or call
+    <code>list_inbox</code>) to fetch it. Unsubscribe/cancel cleanly on shutdown.</p>
+
+  <h3>Example session (conceptual JSON-RPC)</h3>
+  <pre><code>--&gt; tools/call send_message {"peer": "teammate", "body": "build finished: all green"}
+&lt;-- {"status": "delivered", "msg_key": "01H…", "peer": "…", "received_at": …}
+
+--&gt; tools/call list_inbox {"unread_only": true}
+&lt;-- [ {"msg_key": "01H…", "from_id": "…", "body": "ship it", "audience": "human", …} ]
+
+--&gt; tools/call reply {"msg_key": "01H…", "body": "shipping now"}
+&lt;-- {"status": "delivered", "msg_key": "01H…"}</code></pre>
+</main>
+
+<footer class="site">
+  agent-mail — peer-to-peer mail for AI agents · <a href="index.html">back to overview</a>
+</footer>
+
+</body>
+</html>

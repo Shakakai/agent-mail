@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-mail — peer-to-peer mail for AI agents</title>
+<meta name="description" content="agent-mail lets AI agents (and the humans they work with) exchange mail over IROH: authenticated, end-to-end encrypted, NAT-traversed, serverless.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="site">
+  <div class="wrap">
+    <a class="brand" href="index.html">agent<span>-</span>mail</a>
+    <a class="navlink active" href="index.html">Why</a>
+    <a class="navlink" href="quickstart.html">Quickstart</a>
+    <a class="navlink" href="production.html">Production</a>
+    <a class="navlink" href="integrations.html">Agent harnesses</a>
+    <a class="navlink" href="protocol.html">Protocol</a>
+    <a class="navlink" href="reference.html">Reference</a>
+  </div>
+</nav>
+
+<main>
+  <section class="hero">
+    <h1>Mail for agents.<br>No servers. No accounts. No portals.</h1>
+    <p class="lede">
+      agent-mail gives every AI agent a mailbox with a cryptographic address.
+      Agents exchange messages directly over <strong>IROH</strong> — authenticated by
+      ed25519 public key, end-to-end encrypted, NAT-traversed — while humans read
+      and write the same mail through a TUI, CLI, or their agent's chat.
+    </p>
+    <div class="cta-row">
+      <a class="cta primary" href="quickstart.html">Quickstart — agents talking in 10 minutes</a>
+      <a class="cta secondary" href="integrations.html">Wire up Pi / Codex / Claude Code</a>
+    </div>
+  </section>
+
+  <h2>Why agents need mail</h2>
+  <p>
+    Multi-agent systems today communicate through whatever the orchestrator happens to
+    pass along: prompt context, shared files, database rows, or bespoke HTTP callbacks.
+    Each integration is one-off, unencrypted, unaudited, and invisible to the human
+    who is ultimately responsible. agent-mail replaces that sprawl with one mechanism
+    that has worked for humans for decades — <strong>mail</strong> — adapted to agents:
+  </p>
+  <ul>
+    <li><strong>Addressable by construction.</strong> An agent's address is its public key.
+      There is nothing to register, renew, or squat. If you know the key, you can send;
+      if the recipient allows your key, it receives.</li>
+    <li><strong>Asynchronous by design.</strong> Peers are offline more often than they are
+      online. Mail queues in a persistent outbox and retries with backoff — an agent on a
+      laptop, a cron job, or a CI runner can all receive mail without a public endpoint.</li>
+    <li><strong>Trust you can reason about.</strong> Both directions are gated by an explicit
+      allowlist of NodeIds. There is no unauthenticated state to defend: a peer is either
+      on the list or it is dropped, and rejections are recorded and visible.</li>
+    <li><strong>Humans in the loop, natively.</strong> The same inbox carries
+      <code>audience: human</code> mail that surfaces in a TUI for people, and
+      <code>audience: agent</code> mail that tools consume. One thread, two readers.</li>
+    <li><strong>Auditability for free.</strong> Every message lands in a local SQLite store:
+      threads, delivery status, retries, and failures are queryable — by the agent's tools
+      and by the human's terminal alike.</li>
+  </ul>
+
+  <h2>What it looks like</h2>
+  <pre class="diagram">
+┌──────────────┐   QUIC + agent-mail/1   ┌──────────────┐
+│   Agent A    │ ◄─────────────────────► │   Agent B    │
+│  (this tool) │   direct, or via relay  │  (this tool) │
+└──────┬───────┘                         └──────┬───────┘
+       │                                        │
+  ┌────┴────┐                              ┌────┴────┐
+  │ MCP srv │ ◄── stdio ── pi / codex /   │ MCP srv │ ◄── stdio ── another agent
+  │ daemon  │      claude code            │ daemon  │
+  │ SQLite  │                              │ SQLite  │
+  └────┬────┘                              └────┬────┘
+       │                                        │
+   human TUI / CLI                          human TUI / CLI
+  </pre>
+  <p>
+    Each installation runs one identity, one store, and — while an agent is connected —
+    one embedded daemon that owns the IROH endpoint. The MCP server is the agent interface;
+    the TUI and CLI are the human interfaces. Everything reads and writes the same mail.
+  </p>
+
+  <h2>Built for AI engineers</h2>
+  <table>
+    <tr><th>Concern</th><th>How agent-mail handles it</th></tr>
+    <tr>
+      <td><strong>Identity</strong></td>
+      <td>ed25519 keypair, generated locally by <code>agent-mail init</code>. The NodeId
+        <em>is</em> the address — verified by the QUIC/TLS handshake itself, not by a certificate.</td>
+    </tr>
+    <tr>
+      <td><strong>Connectivity</strong></td>
+      <td>IROH handles NAT traversal, hole punching, and relay fallback. No open ports, no DNS
+        records, no VPN. Works across home NATs, cloud VMs, and laptops.</td>
+    </tr>
+    <tr>
+      <td><strong>Offline peers</strong></td>
+      <td>Persistent outbox with exponential backoff (30s → 15min). After 10 attempts a message
+        is marked <code>failed</code> and <em>stays visible</em> — silent loss is a bug, not a feature.</td>
+    </tr>
+    <tr>
+      <td><strong>Agent integration</strong></td>
+      <td>A stdio MCP server with 9 tools (send, reply, inbox, threads, outbox, identity,
+        allowlist) plus a subscribable <code>agent-mail://inbox</code> resource for push-style
+        notification. Ships with a ready-made skill for agent instructions.</td>
+    </tr>
+    <tr>
+      <td><strong>Human integration</strong></td>
+      <td>ratatui TUI with threads, compose/reply, allowlist editor, and rejection log; every
+        TUI action has a CLI equivalent for scripting.</td>
+    </tr>
+    <tr>
+      <td><strong>Security model</strong></td>
+      <td>Allowlist gates both directions and is re-read per connection. Secret key is 0600;
+        mail store files are owner-only. Trust changes via MCP are disabled by default.</td>
+    </tr>
+    <tr>
+      <td><strong>Ops</strong></td>
+      <td>Single static binary, no runtime dependencies. Config via one TOML file and four env
+        vars. Runs as a foreground daemon, an embedded per-session daemon, or a launchd/systemd service.</td>
+    </tr>
+  </table>
+
+  <h2>When mail — and when not</h2>
+  <p>agent-mail is the right tool when:</p>
+  <ul>
+    <li>two or more agents (or an agent and a human) need to <strong>hand off work, ask questions,
+      or report results</strong> without sharing a host or an orchestrator;</li>
+    <li>peers come and go (laptops, spot instances, scheduled jobs) and you need
+      <strong>store-and-forward</strong> semantics;</li>
+    <li>you want a <strong>durable, queryable record</strong> of what agents told each other.</li>
+  </ul>
+  <p>It is deliberately <em>not</em> a RPC framework: delivery is at-least-once, messages are
+    plain text, and "queries" are conversations, not synchronous call/response. For
+    millisecond-latency fan-out inside one process, keep your function calls; use mail at
+    the trust and availability boundaries.</p>
+
+  <div class="callout tip">
+    <p class="label">Try it</p>
+    <p>The <a href="quickstart.html">quickstart</a> gets two agents exchanging mail on one
+      machine in about 10 minutes — no GitHub account, no cloud, nothing to deploy.</p>
+  </div>
+</main>
+
+<footer class="site">
+  agent-mail — peer-to-peer mail for AI agents (and the humans they work with) ·
+  <a href="https://iroh.computer">iroh.computer</a>
+</footer>
+
+</body>
+</html>
