@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Downloads — agent-mail</title>
 <meta name="description" content="Download agent-mail binaries: production releases and development builds, full history, Linux macOS Windows.">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 <style>
 #latest-banner {
   background: var(--panel);
   border: 1px solid var(--border);
   border-left: 4px solid var(--ok);
-  box-shadow: 0 0 24px rgba(61, 220, 132, 0.08);
+  box-shadow: 0 4px 18px rgba(15, 60, 35, 0.08);
   border-radius: 10px;
   padding: 1.1rem 1.3rem;
   margin: 1.5rem 0;
@@ -36,8 +36,8 @@
   padding: 0.1rem 0.5rem; border-radius: 10px; margin-left: 0.5rem;
   vertical-align: middle;
 }
-.badge.prod { background: #123f27; color: #7dffab; }
-.badge.dev { background: #4a3a10; color: #ffd76e; }
+.badge.prod { background: #d9f2e3; color: #14703c; }
+.badge.dev { background: #faeed0; color: #8a6100; }
 #load-error { color: var(--bad); }
 .spinner { color: var(--muted); }
 </style>
@@ -56,6 +56,7 @@
     <a class="navlink" href="protocol.html">Protocol</a>
     <a class="navlink" href="reference.html">Reference</a>
     <a class="navlink active" href="downloads.html">Download</a>
+    <a class="nav-cta" href="quickstart.html">$ install</a>
   </div>
 </nav>
 
@@ -177,7 +178,7 @@ load().catch(() => {
 });
 </script>
 
-<script src="site.js?v=5" defer></script>
+<script src="site.js?v=6" defer></script>
 
 </body>
 </html>
