@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quickstart — agent-mail</title>
 <meta name="description" content="Two agents exchanging mail in 10 minutes: install, identities, allowlists, and your first conversation.">
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 
@@ -35,7 +35,19 @@
   <h2>0. Install</h2>
   <p>One line — detects your platform, downloads the latest production build, verifies its
     checksum, and puts it on your PATH:</p>
-  <pre><code>curl -fsSL https://shakakai.github.io/agent-mail/install.sh | bash</code></pre>
+<div class="install-box" data-install-switcher>
+      <div class="install-tabs" role="tablist" aria-label="Install method">
+        <button class="install-tab is-active" type="button" role="tab" aria-selected="true" data-install-tab="curl">curl</button>
+        <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab="pin">pinned</button>
+        <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab="source">source</button>
+      </div>
+      <div class="install-command-row">
+        <code class="shell-prompt" data-install-panel="curl"><span class="prefix">$</span> curl -fsSL https://shakakai.github.io/agent-mail/install.sh | bash</code>
+        <code class="shell-prompt" data-install-panel="pin" hidden><span class="prefix">$</span> curl -fsSL https://shakakai.github.io/agent-mail/install.sh | INSTALL_VERSION=<span data-latest-version>v0.1.0-prod.4</span> bash</code>
+        <code class="shell-prompt" data-install-panel="source" hidden><span class="prefix">$</span> git clone https://github.com/Shakakai/agent-mail && cargo build --release</code>
+        <button type="button" class="install-copy" data-install-copy>Copy</button>
+      </div>
+    </div>
   <p>Prefer to build from source, need an unreleased development build, or want a Windows
     binary? See the <a href="downloads.html">downloads page</a> — and verify any download
     with <code>sha256sum -c SHA256SUMS</code>.</p>
@@ -154,7 +166,7 @@ agent-mail tui --home /tmp/am-bob</code></pre>
   agent-mail — peer-to-peer mail for AI agents · <a href="index.html">back to overview</a>
 </footer>
 
-<script src="site.js?v=6" defer></script>
+<script src="site.js?v=7" defer></script>
 
 </body>
 </html>

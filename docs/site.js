@@ -73,3 +73,60 @@ document.addEventListener('DOMContentLoaded', () => {
         el.textContent = LINES[i];
     }, 2800);
 })();
+
+// Tabbed install boxes (curl / pinned / source) with an always-visible Copy.
+document.querySelectorAll('[data-install-switcher]').forEach((box) => {
+    const tabs = box.querySelectorAll('[data-install-tab]');
+    const panels = box.querySelectorAll('[data-install-panel]');
+    const copyBtn = box.querySelector('[data-install-copy]');
+
+    tabs.forEach((tab) => tab.addEventListener('click', () => {
+        tabs.forEach((t) => {
+            t.classList.toggle('is-active', t === tab);
+            t.setAttribute('aria-selected', String(t === tab));
+        });
+        panels.forEach((p) => {
+            p.hidden = p.dataset.installPanel !== tab.dataset.installTab;
+        });
+    }));
+
+    if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+            const visible = Array.from(panels).find((p) => !p.hidden);
+            if (!visible) return;
+            const text = visible.textContent.replace(/^\s*\$\s*/, '').trim();
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    ta.remove();
+                }
+                copyBtn.textContent = 'Copied';
+                copyBtn.classList.add('copied');
+            } catch {
+                copyBtn.textContent = 'Failed';
+            }
+            setTimeout(() => {
+                copyBtn.textContent = 'Copy';
+                copyBtn.classList.remove('copied');
+            }, 1600);
+        });
+    }
+});
+
+// Fill [data-latest-version] slots with the current production release tag.
+(function () {
+    const slots = document.querySelectorAll('[data-latest-version]');
+    if (!slots.length) return;
+    fetch('https://api.github.com/repos/Shakakai/agent-mail/releases/latest')
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.status))))
+        .then((rel) => slots.forEach((s) => { s.textContent = rel.tag_name; }))
+        .catch(() => {});
+})();

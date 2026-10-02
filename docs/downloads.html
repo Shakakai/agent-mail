@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Downloads — agent-mail</title>
 <meta name="description" content="Download agent-mail binaries: production releases and development builds, full history, Linux macOS Windows.">
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 <style>
 #latest-banner {
   background: var(--panel);
@@ -71,7 +71,19 @@
   </p>
 
   <h2>Install (latest production build)</h2>
-  <pre><code>curl -fsSL https://shakakai.github.io/agent-mail/install.sh | bash</code></pre>
+<div class="install-box" data-install-switcher>
+      <div class="install-tabs" role="tablist" aria-label="Install method">
+        <button class="install-tab is-active" type="button" role="tab" aria-selected="true" data-install-tab="curl">curl</button>
+        <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab="pin">pinned</button>
+        <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab="source">source</button>
+      </div>
+      <div class="install-command-row">
+        <code class="shell-prompt" data-install-panel="curl"><span class="prefix">$</span> curl -fsSL https://shakakai.github.io/agent-mail/install.sh | bash</code>
+        <code class="shell-prompt" data-install-panel="pin" hidden><span class="prefix">$</span> curl -fsSL https://shakakai.github.io/agent-mail/install.sh | INSTALL_VERSION=<span data-latest-version>v0.1.0-prod.4</span> bash</code>
+        <code class="shell-prompt" data-install-panel="source" hidden><span class="prefix">$</span> git clone https://github.com/Shakakai/agent-mail && cargo build --release</code>
+        <button type="button" class="install-copy" data-install-copy>Copy</button>
+      </div>
+    </div>
   <p>Platform-detecting installer: verifies the SHA-256 checksum from the release before
     installing to <code>~/.local/bin</code>. Pin a specific release with
     <code>INSTALL_VERSION=v0.1.0-prod.3</code>, or choose another directory with
@@ -178,7 +190,7 @@ load().catch(() => {
 });
 </script>
 
-<script src="site.js?v=6" defer></script>
+<script src="site.js?v=7" defer></script>
 
 </body>
 </html>

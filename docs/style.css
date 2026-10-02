@@ -343,3 +343,71 @@ footer.site {
   .mesh .packets, .mesh .pulse { display: none; }
   .scanlines { background: none; }
 }
+
+/* ---- tabbed install box (hero / quickstart / downloads) ---- */
+.install-box {
+  background: var(--code-bg);
+  border: 1px solid #1e3a29;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(10, 45, 25, 0.28);
+  margin: 1.25rem 0;
+  max-width: 46rem;
+}
+.install-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.45rem 0.75rem 0;
+  border-bottom: 1px solid #17301f;
+  background: #0b140e;
+}
+.install-tab {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  background: none;
+  border: none;
+  color: #5d8a6d;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.install-tab:hover { color: #9fe8bd; }
+.install-tab.is-active { color: #7dffab; border-bottom-color: var(--neon); }
+.install-command-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 1rem;
+}
+code.shell-prompt {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--code-ink);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+code.shell-prompt .prefix {
+  color: var(--neon);
+  user-select: none;
+  margin-right: 0.5em;
+}
+.install-copy {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  padding: 0.35rem 0.95rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.install-copy:hover { background: var(--accent-dark); }
+.install-copy.copied { background: var(--ok); }
