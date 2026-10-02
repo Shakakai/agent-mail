@@ -2,7 +2,7 @@
 //! (allowlist-gated), and retries the outbox with exponential backoff.
 
 use anyhow::Result;
-use iroh::{Endpoint, SecretKey, endpoint::presets, protocol::{AcceptError, ProtocolHandler, Router}};
+use iroh::{Endpoint, SecretKey, protocol::{AcceptError, ProtocolHandler, Router}};
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -174,11 +174,8 @@ pub async fn run_until(paths: Paths, config: Config, shutdown: Arc<tokio::sync::
     // CRITICAL: bind the endpoint with our persistent secret key. Without
     // this the endpoint gets an ephemeral identity: published discovery
     // records and all connections would use a key our peers don't know.
-    let endpoint = Endpoint::builder(presets::N0)
-        .secret_key(secret_key.clone())
-        .bind()
-        .await
-        .map_err(crate::util::de)?;
+    info!("network: {}", crate::net::describe(&config));
+    let endpoint = crate::net::bind_endpoint(&config, &secret_key).await?;
     let router = Router::builder(endpoint.clone())
         .accept(
             proto::ALPN,
@@ -189,7 +186,7 @@ pub async fn run_until(paths: Paths, config: Config, shutdown: Arc<tokio::sync::
             },
         )
         .spawn();
-    endpoint.online().await;
+    crate::net::wait_online(&config, &endpoint).await;
     info!("endpoint online");
     // Log our current address ticket: useful for `send --ticket` debugging
     // and for humans to inspect published addressing info.

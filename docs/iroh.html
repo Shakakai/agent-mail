@@ -92,12 +92,20 @@ agent-mail addr &gt; ticket.json
 # sender:
 agent-mail send bob --ticket "$(cat ticket.json)" -m "…"</code></pre>
       Ideal for LANs, VPCs, and anywhere you control both ends.</li>
-    <li><strong>Self-host iroh-dns-server (and relays).</strong> For fleets or strict
-      environments, run your own discovery/relay infrastructure — see the
-      <a href="https://iroh.computer">IROH docs</a>. Everything else stays identical.</li>
+    <li><strong>Self-host relays (and discovery).</strong> Run your own relay and point
+      the node at it — two lines in <code>config.toml</code>:
+      <pre><code>relay = "custom"
+relay_urls = ["https://relay.example.com."]</code></pre>
+      For strict environments also run your own pkarr/DNS (the IROH docs cover
+      <code>iroh-dns-server</code>); until then you can keep n0 discovery or set
+      <code>discovery = false</code> and use tickets.</li>
     <li><strong>Use the free tier, eyes open.</strong> n0's discovery is rate-limited and
       has no uptime SLA; it flaps occasionally. The outbox's retry loop absorbs most of it —
       watch your <code>failed</code> count (see <a href="production.html#ops">operations</a>).</li>
+    <li><strong>Skip relays entirely.</strong> <code>relay = "disabled"</code> plus
+      <code>discovery = false</code> gives you a node that makes no outbound infrastructure
+      connections at all — direct LAN paths and address tickets only. (The daemon knows
+      not to wait for a relay connection in this mode.)</li>
   </ol>
 
   <h2 id="limits">Transport limits that matter to mail</h2>

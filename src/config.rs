@@ -86,6 +86,21 @@ pub struct Config {
     pub daemon_tick_secs: u64,
     /// Whether the MCP server may modify the trust list (default false).
     pub mcp_allow_trust_changes: bool,
+    /// Which relay infrastructure to use (default: n0's free relays).
+    pub relay: RelayCfg,
+    /// Publish/resolve addressing via n0's pkarr/DNS discovery
+    /// (default true; disable for ticket-only/LAN-only nodes).
+    pub discovery: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelayCfg {
+    /// n0's production relays (the IROH default).
+    N0,
+    /// No relays: direct paths and explicit tickets only.
+    Disabled,
+    /// Your own relay server(s).
+    Custom(Vec<String>),
 }
 
 impl Default for Config {
@@ -96,6 +111,8 @@ impl Default for Config {
             retry_max_secs: 900,
             daemon_tick_secs: 15,
             mcp_allow_trust_changes: false,
+            relay: RelayCfg::N0,
+            discovery: true,
         }
     }
 }
@@ -108,6 +125,9 @@ struct ConfigFile {
     retry_max_secs: u64,
     daemon_tick_secs: u64,
     mcp_allow_trust_changes: bool,
+    relay: String,
+    relay_urls: Vec<String>,
+    discovery: bool,
 }
 
 impl Default for ConfigFile {
@@ -119,6 +139,9 @@ impl Default for ConfigFile {
             retry_max_secs: c.retry_max_secs,
             daemon_tick_secs: c.daemon_tick_secs,
             mcp_allow_trust_changes: false,
+            relay: "n0".to_string(),
+            relay_urls: Vec::new(),
+            discovery: true,
         }
     }
 }
@@ -133,12 +156,29 @@ impl Config {
             .with_context(|| format!("reading {}", path.display()))?;
         let file: ConfigFile = toml::from_str(&text)
             .with_context(|| format!("parsing {}", path.display()))?;
+        let relay = match file.relay.as_str() {
+            "n0" => RelayCfg::N0,
+            "disabled" => RelayCfg::Disabled,
+            "custom" => {
+                if file.relay_urls.is_empty() {
+                    anyhow::bail!(
+                        "config.toml: relay = \"custom\" requires at least one relay_urls entry"
+                    );
+                }
+                RelayCfg::Custom(file.relay_urls)
+            }
+            other => anyhow::bail!(
+                "config.toml: relay must be \"n0\", \"disabled\", or \"custom\" (got `{other}`)"
+            ),
+        };
         Ok(Self {
             max_message_bytes: file.max_message_bytes,
             retry_base_secs: file.retry_base_secs,
             retry_max_secs: file.retry_max_secs,
             daemon_tick_secs: file.daemon_tick_secs,
             mcp_allow_trust_changes: file.mcp_allow_trust_changes,
+            relay,
+            discovery: file.discovery,
         })
     }
 }

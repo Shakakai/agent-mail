@@ -164,6 +164,19 @@ retry_max_secs  = 900              # 15 min
 # How often the daemon scans the outbox for due messages.
 daemon_tick_secs = 15
 
+# Relay infrastructure. "n0" (default) uses IROH's free public relays;
+# "disabled" uses direct paths + explicit tickets only; "custom" points at
+# your own relay server(s). See the IROH page for what relays do.
+relay = "n0"
+
+# Required when relay = "custom": your relay URL(s).
+relay_urls = ["https://relay.example.com."]
+
+# Publish/resolve addressing via n0's pkarr/DNS discovery (default true).
+# Set false for ticket-only or LAN-only nodes — nothing is published and
+# nothing is looked up; peers dial addresses you exchange out of band.
+discovery = true
+
 # Whether the MCP server may modify the allowlist (the allow_add tool).
 # Keep false unless you specifically want your agent to manage trust.
 mcp_allow_trust_changes = false</code></pre>

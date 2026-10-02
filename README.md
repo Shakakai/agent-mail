@@ -118,7 +118,20 @@ env overrides:
 | `~/.config/agent-mail/` | `AGENT_MAIL_CONFIG_DIR` | Config root |
 | `~/.config/agent-mail/secret-key` | `AGENT_MAIL_SECRET_KEY` (path) | ed25519 secret key, `0600` |
 | `~/.config/agent-mail/allowed-keys.toml` | `AGENT_MAIL_ALLOWED_KEYS` (path) | Trust: who may talk to me |
-| `~/.config/agent-mail/config.toml` | — | Tuning: ports, max message size, relay URLs |
+| `~/.config/agent-mail/config.toml` | — | Tuning: message size, retry backoff, relay & discovery |
+
+All config knobs (defaults shown):
+
+```toml
+max_message_bytes       = 1048576   # body limit
+retry_base_secs         = 30        # outbox backoff base
+retry_max_secs          = 900       # outbox backoff cap
+daemon_tick_secs        = 15        # outbox scan interval
+mcp_allow_trust_changes = false     # MCP allow_add gate
+relay                   = "n0"      # "n0" | "disabled" | "custom"
+relay_urls              = []        # required when relay = "custom"
+discovery               = true      # n0 pkarr/DNS publish+resolve
+```
 | `~/.local/share/agent-mail/mail.db` | `AGENT_MAIL_DATA_DIR` | SQLite: inbox, outbox, threads |
 
 ### Identity (`secret-key`)

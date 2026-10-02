@@ -2,7 +2,7 @@
 //! enqueue + deliver-or-queue, inbox listing, reading, replying, threads.
 
 use anyhow::{Context, Result, bail};
-use iroh::{Endpoint, SecretKey, endpoint::presets};
+use iroh::SecretKey;
 use std::path::Path;
 
 use crate::client;
@@ -61,11 +61,7 @@ pub async fn send_message(
         store.record_incoming(&msg)?;
         Ok(crate::util::now_secs())
     } else {
-        let endpoint = Endpoint::builder(presets::N0)
-            .secret_key(sk.clone())
-            .bind()
-            .await
-            .map_err(crate::util::de)?;
+        let endpoint = crate::net::bind_endpoint(config, sk).await?;
         let r = client::deliver(
             &endpoint,
             iroh::EndpointAddr::from(peer_id.parse::<iroh::EndpointId>()?),

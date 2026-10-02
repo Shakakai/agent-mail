@@ -3,7 +3,6 @@
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use iroh::{Endpoint, endpoint::presets};
 
 use crate::allowlist::{AllowList, PeerEntry};
 use crate::client;
@@ -150,7 +149,7 @@ pub async fn run() -> Result<()> {
             json,
             attach,
         } => cmd_send(&paths, &config, &peer, &message, stdin, ticket.as_deref(), attach, json).await,
-        Commands::Addr { json } => cmd_addr(&paths, json).await,
+        Commands::Addr { json } => cmd_addr(&paths, &config, json).await,
         Commands::Inbox { peer, json } => cmd_inbox(&paths, peer, json),
         Commands::Outbox { json } => cmd_outbox(&paths, json),
         Commands::Read {
@@ -242,14 +241,10 @@ fn read_body(message: &Option<String>, stdin: bool) -> Result<String> {
     }
 }
 
-async fn cmd_addr(paths: &Paths, json: bool) -> Result<()> {
+async fn cmd_addr(paths: &Paths, config: &Config, json: bool) -> Result<()> {
     let sk = identity::load(paths)?;
-    let endpoint = Endpoint::builder(presets::N0)
-        .secret_key(sk)
-        .bind()
-        .await
-        .map_err(crate::util::de)?;
-    endpoint.online().await;
+    let endpoint = crate::net::bind_endpoint(config, &sk).await?;
+    crate::net::wait_online(config, &endpoint).await;
     // give direct address discovery a moment to populate
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let addr = endpoint.addr();
@@ -313,11 +308,7 @@ async fn cmd_send(
     };
     ops::validate_message(config, &msg)?;
     store.enqueue_outgoing(&msg, config.retry_base_secs)?;
-    let endpoint = Endpoint::builder(presets::N0)
-        .secret_key(sk.clone())
-        .bind()
-        .await
-        .map_err(crate::util::de)?;
+    let endpoint = crate::net::bind_endpoint(config, &sk).await?;
     let result = if peer_id == me && ticket.is_none() {
         // Loopback: iroh can't dial our own NodeId; write into our inbox.
         store.record_incoming(&msg)?;
@@ -535,11 +526,7 @@ async fn cmd_reply(
         store.record_incoming(&msg)?;
         Ok(crate::util::now_secs())
     } else {
-        let endpoint = Endpoint::builder(presets::N0)
-            .secret_key(sk.clone())
-            .bind()
-            .await
-            .map_err(crate::util::de)?;
+        let endpoint = crate::net::bind_endpoint(config, &sk).await?;
         let r = client::deliver(
             &endpoint,
             iroh::EndpointAddr::from(peer_id.parse::<iroh::EndpointId>()?),

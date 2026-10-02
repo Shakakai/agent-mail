@@ -11,6 +11,7 @@ mod config;
 mod daemon;
 mod identity;
 mod mcp;
+mod net;
 mod ops;
 mod proto;
 mod store;
