@@ -72,7 +72,7 @@
       <td><code>send</code></td>
       <td>Send to an allowlisted peer; delivers or queues for retry.</td>
       <td><code>-m</code> body · <code>--stdin</code> · <code>--ticket</code> address
-        JSON · <code>--audience agent|human</code> · <code>--json</code></td>
+        JSON · <code>--json</code></td>
     </tr>
     <tr>
       <td><code>addr</code></td>
@@ -82,7 +82,7 @@
     <tr>
       <td><code>inbox</code></td>
       <td>List received messages, newest first.</td>
-      <td><code>--human</code> · <code>--peer</code> · <code>--json</code></td>
+      <td><code>--peer</code> · <code>--json</code></td>
     </tr>
     <tr>
       <td><code>read</code></td>
@@ -91,8 +91,7 @@
     </tr>
     <tr>
       <td><code>reply</code></td>
-      <td>Reply to a received message, continuing its thread; echoes the original's
-        audience.</td>
+      <td>Reply to a received message, continuing its thread.</td>
       <td><code>-m</code> · <code>--stdin</code> · <code>--json</code></td>
     </tr>
     <tr>
@@ -118,20 +117,18 @@
     </tr>
     <tr>
       <td><code>send_message</code></td>
-      <td><code>peer</code> (NodeId or alias), <code>body</code>,
-        <code>audience?</code> = agent|human</td>
+      <td><code>peer</code> (NodeId or alias), <code>body</code></td>
       <td><code>status: delivered|queued</code>, <code>msg_key</code>, and for queued a note
         with the reason.</td>
     </tr>
     <tr>
       <td><code>reply</code></td>
       <td><code>msg_key</code>, <code>body</code></td>
-      <td>New message key + delivery status. Keeps the thread; echoes the original
-        audience.</td>
+      <td>New message key + delivery status. Keeps the thread.</td>
     </tr>
     <tr>
       <td><code>list_inbox</code></td>
-      <td><code>unread_only?</code>, <code>human_only?</code>, <code>peer?</code></td>
+      <td><code>unread_only?</code>, <code>peer?</code></td>
       <td>Messages newest-first with previews; the cheap "anything new?" poll.</td>
     </tr>
     <tr>
@@ -183,7 +180,7 @@
 &lt;-- {"status": "delivered", "msg_key": "01H…", "peer": "…", "received_at": …}
 
 --&gt; tools/call list_inbox {"unread_only": true}
-&lt;-- [ {"msg_key": "01H…", "from_id": "…", "body": "ship it", "audience": "human", …} ]
+&lt;-- [ {"msg_key": "01H…", "from_id": "…", "body": "ship it", …} ]
 
 --&gt; tools/call reply {"msg_key": "01H…", "body": "shipping now"}
 &lt;-- {"status": "delivered", "msg_key": "01H…"}</code></pre>

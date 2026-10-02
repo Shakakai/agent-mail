@@ -38,27 +38,25 @@ alias agent-mail=$PWD/target/release/agent-mail   # or add to PATH</code></pre>
   <div class="step">
     <h3><span class="num">1</span>Create two identities</h3>
     <p>
-      An identity is an ed25519 keypair plus its own store and allowlist. Running two
-      identities on one machine is exactly how you simulate two agents — each gets its
-      own <code>AGENT_MAIL_CONFIG_DIR</code> / <code>AGENT_MAIL_DATA_DIR</code>:
+      An identity is an ed25519 keypair plus its own store and allowlist, all in one
+      self-contained folder. The global <code>--home</code> flag creates and selects it,
+      so any number of independent nodes can run on one machine:
     </p>
-    <pre><code># Agent "alice"
-export ALICE_CFG=/tmp/am-alice/cfg ALICE_DATA=/tmp/am-alice/data
-AGENT_MAIL_CONFIG_DIR=$ALICE_CFG AGENT_MAIL_DATA_DIR=$ALICE_DATA agent-mail init
-ALICE_ID=$(AGENT_MAIL_CONFIG_DIR=$ALICE_CFG AGENT_MAIL_DATA_DIR=$ALICE_DATA agent-mail id)
+    <pre><code># Agent "alice" — creates the folder, the private key, everything:
+agent-mail init --home /tmp/am-alice
+ALICE_ID=$(agent-mail --home /tmp/am-alice id)
 
-# Agent "bob"
-export BOB_CFG=/tmp/am-bob/cfg BOB_DATA=/tmp/am-bob/data
-AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA agent-mail init
-BOB_ID=$(AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA agent-mail id)
+# Agent "bob":
+agent-mail init --home /tmp/am-bob
+BOB_ID=$(agent-mail --home /tmp/am-bob id)
 
 echo "alice=$ALICE_ID"; echo "bob=$BOB_ID"</code></pre>
     <p>
       Mail flows only between allowlisted keys, in <em>both</em> directions — so each side
       must allow the other:
     </p>
-    <pre><code>AGENT_MAIL_CONFIG_DIR=$ALICE_CFG agent-mail allow add "$BOB_ID" --name bob
-AGENT_MAIL_CONFIG_DIR=$BOB_CFG  agent-mail allow add "$ALICE_ID" --name alice</code></pre>
+    <pre><code>agent-mail --home /tmp/am-alice allow add "$BOB_ID" --name bob
+agent-mail --home /tmp/am-bob  allow add "$ALICE_ID" --name alice</code></pre>
   </div>
 
   <div class="step">
@@ -66,7 +64,7 @@ AGENT_MAIL_CONFIG_DIR=$BOB_CFG  agent-mail allow add "$ALICE_ID" --name alice</c
     <p>
       Someone has to be listening. Bob's daemon owns his endpoint and accepts mail:
     </p>
-    <pre><code>AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA agent-mail daemon</code></pre>
+    <pre><code>agent-mail daemon --home /tmp/am-bob</code></pre>
     <div class="callout tip">
       <p class="label">Note</p>
       <p>When an agent harness connects via MCP (<a href="integrations.html">next page</a>),
@@ -78,8 +76,7 @@ AGENT_MAIL_CONFIG_DIR=$BOB_CFG  agent-mail allow add "$ALICE_ID" --name alice</c
 
   <div class="step">
     <h3><span class="num">3</span>Send mail</h3>
-    <pre><code>AGENT_MAIL_CONFIG_DIR=$ALICE_CFG AGENT_MAIL_DATA_DIR=$ALICE_DATA \
-  agent-mail send bob -m "hello bob, this is alice" --audience agent</code></pre>
+    <pre><code>agent-mail --home /tmp/am-alice send bob -m "hello bob, this is alice"</code></pre>
     <p>Expected: <code>delivered to bob (msg 01H…)</code>. If bob were offline you'd see
       <code>queued</code> — the message persists and his daemon retries with backoff the
       moment he comes online.</p>
@@ -88,11 +85,10 @@ AGENT_MAIL_CONFIG_DIR=$BOB_CFG  agent-mail allow add "$ALICE_ID" --name alice</c
   <div class="step">
     <h3><span class="num">4</span>Read and reply</h3>
     <pre><code># as bob:
-AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA agent-mail inbox
+agent-mail --home /tmp/am-bob inbox
 # → * 01H…  &lt;alice's node id&gt;  0s ago  hello bob, this is alice
 
-AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA \
-  agent-mail reply 01H… -m "hi alice, got it"</code></pre>
+agent-mail --home /tmp/am-bob reply 01H… -m "hi alice, got it"</code></pre>
     <p>Replies stay in the same thread, so conversations — not just packets — are what you
       read back. <code>read</code> and <code>inbox</code> both take <code>--json</code> for scripting.</p>
   </div>
@@ -100,13 +96,12 @@ AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA \
   <div class="step">
     <h3><span class="num">5</span>See it as a human</h3>
     <pre><code># as bob:
-AGENT_MAIL_CONFIG_DIR=$BOB_CFG AGENT_MAIL_DATA_DIR=$BOB_DATA agent-mail tui</code></pre>
+agent-mail tui --home /tmp/am-bob</code></pre>
     <p>
       The TUI shows threads on the left, the conversation on the right. Press
-      <code>c</code> to compose, <code>F2</code> to toggle the audience between
-      <code>agent</code> and <code>human</code>, <code>Ctrl-S</code> to send. Mail sent with
-      <code>human</code> audience is what you, the person, want to notice; agent-facing mail
-      is what your agent's tools consume.
+      <code>c</code> to compose, <code>Ctrl-S</code> to send. This is bob's mailbox; a
+      human keeps their own the same way — <code>init --home</code>, then
+      <code>tui --home</code> — and agents send to them like any other peer.
     </p>
   </div>
 

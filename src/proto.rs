@@ -1,4 +1,4 @@
-//! The `agent-mail/1` wire protocol: length-prefixed JSON frames on IROH
+//! The `agent-mail/2` wire protocol: length-prefixed JSON frames on IROH
 //! QUIC streams. One bidirectional stream per exchange: the initiator writes
 //! exactly one frame, half-closes, and reads exactly one response frame.
 
@@ -8,8 +8,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::util::now_secs;
 
-pub const ALPN: &[u8] = b"agent-mail/1";
-pub const PROTOCOL_V: u8 = 1;
+pub const ALPN: &[u8] = b"agent-mail/2";
+pub const PROTOCOL_V: u8 = 2;
 pub const CAP_MAIL: &str = "mail";
 pub const MAX_FRAME_BYTES: usize = 1 << 20;
 
@@ -17,13 +17,6 @@ pub const MAX_FRAME_BYTES: usize = 1 << 20;
 pub struct AgentInfo {
     pub name: String,
     pub version: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Audience {
-    Agent,
-    Human,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,7 +27,6 @@ pub struct Message {
     pub from: String,
     pub to: String,
     pub created_at: u64,
-    pub audience: Audience,
     pub content_type: String,
     pub body: String,
 }

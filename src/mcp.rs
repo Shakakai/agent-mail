@@ -29,7 +29,6 @@ use crate::config::{Config, Paths};
 use crate::daemon;
 use crate::identity;
 use crate::ops;
-use crate::proto::Audience;
 use crate::store::Store;
 
 /// Resource URI clients subscribe to for new-mail notifications.
@@ -41,9 +40,6 @@ pub struct SendParams {
     pub peer: String,
     /// Message body (plain text).
     pub body: String,
-    /// Intended audience on the receiving side: "agent" (default) or "human".
-    #[serde(default)]
-    pub audience: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -51,9 +47,6 @@ pub struct ListInboxParams {
     /// Only unread messages.
     #[serde(default)]
     pub unread_only: Option<bool>,
-    /// Only messages addressed to humans.
-    #[serde(default)]
-    pub human_only: Option<bool>,
     /// Filter by peer NodeId or allowlist name.
     #[serde(default)]
     pub peer: Option<String>,
@@ -138,16 +131,6 @@ impl MailMcp {
             })
     }
 
-    fn parse_audience(s: Option<&str>) -> std::result::Result<Audience, ErrorData> {
-        match s.unwrap_or("agent") {
-            "agent" => Ok(Audience::Agent),
-            "human" => Ok(Audience::Human),
-            other => Err(Self::bad_request(format!(
-                "audience must be `agent` or `human`, got `{other}`"
-            ))),
-        }
-    }
-
     fn json<T: serde::Serialize>(v: &T) -> String {
         serde_json::to_string_pretty(v).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
@@ -198,14 +181,12 @@ impl MailMcp {
             return Err(Self::bad_request("message body is empty"));
         }
         let peer_id = self.resolve_peer(&p.peer)?;
-        let audience = Self::parse_audience(p.audience.as_deref())?;
         let outcome = ops::send_message(
             &self.paths,
             &self.config,
             &self.secret_key,
             &self.me,
             &peer_id,
-            audience,
             &p.body,
             None,
             None,
@@ -215,13 +196,12 @@ impl MailMcp {
         Ok(Self::json(&outcome))
     }
 
-    #[tool(description = "List received messages (newest first), with body previews. Optionally filter to unread, human-audience, or a specific peer.")]
+    #[tool(description = "List received messages (newest first), with body previews. Optionally filter to unread or a specific peer.")]
     fn list_inbox(&self, Parameters(p): Parameters<ListInboxParams>) -> std::result::Result<String, ErrorData> {
         let rows = ops::list_inbox(
             &self.paths,
             p.peer.as_deref(),
             p.unread_only.unwrap_or(false),
-            p.human_only.unwrap_or(false),
         )
         .map_err(|e| Self::internal(format!("{e:#}")))?;
         Ok(Self::json(&rows))
@@ -242,7 +222,7 @@ impl MailMcp {
         if p.body.trim().is_empty() {
             return Err(Self::bad_request("reply body is empty"));
         }
-        let (peer_id, thread_id, reply_to, audience) =
+        let (peer_id, thread_id, reply_to) =
             ops::reply_context(&self.paths, &p.msg_key).map_err(|e| Self::internal(format!("{e:#}")))?;
         let outcome = ops::send_message(
             &self.paths,
@@ -250,7 +230,6 @@ impl MailMcp {
             &self.secret_key,
             &self.me,
             &peer_id,
-            audience,
             &p.body,
             Some(&thread_id),
             Some(&reply_to),
@@ -323,7 +302,7 @@ impl ServerHandler for MailMcp {
                 request.uri
             )));
         }
-        let messages = ops::list_inbox(&self.paths, None, false, false)
+        let messages = ops::list_inbox(&self.paths, None, false)
             .map_err(|e| Self::internal(format!("{e:#}")))?;
         let text = serde_json::to_string_pretty(&messages)
             .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));

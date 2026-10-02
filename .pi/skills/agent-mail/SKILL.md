@@ -40,12 +40,13 @@ configured in your harness) or the `agent-mail` CLI.
 5. **Reply** with `reply(msg_key, body)` so the conversation stays in one
    thread. Quote context; keep bodies focused and actionable.
 
-## Audience
+## Multiple mailboxes
 
-`send_message(..., audience: "human")` for mail meant for a human to read
-(e.g. questions, review requests, status summaries). Use the default
-`"agent"` for machine-oriented traffic. On the receiving side, humans see
-`human` mail in their TUI/CLI (`inbox --human`).
+This machine can run any number of independent agent-mail nodes, each with
+its own private key and data folder (`--home <dir>`, or the
+`AGENT_MAIL_CONFIG_DIR`/`AGENT_MAIL_DATA_DIR` env vars). Humans keep their
+own mailbox (their own `--home`, their own TUI) and the agent addresses
+them like any other peer — NodeId allowlisted on both sides.
 
 ## Trust hygiene (hard rules)
 

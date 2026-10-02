@@ -12,10 +12,9 @@ automatically.
 ## Status
 
 **All milestones M2–M5 implemented and verified** (Rust, iroh 1.3):
-identity, allowlist (inbound + outbound gating), `agent-mail/1` protocol
+identity, allowlist (inbound + outbound gating), `agent-mail/2` protocol
 (hello/send/ack/error), SQLite inbox/outbox with at-least-once delivery and
-daemon retry, CLI, stdio MCP server + agent skill, and the ratatui TUI for
-humans. M6 (extensions: mailbox capability, attachments, multi-device)
+daemon retry, CLI, stdio MCP server + agent skill, and the ratatui TUI. M6 (extensions: mailbox capability, attachments, multi-device)
 remains future work.
 
 Verified against the live n0 network: two agents on one machine exchanging
@@ -68,7 +67,7 @@ The transport pieces we use directly:
 | IROH concept | What we use it for |
 |---|---|
 | `Endpoint` | One long-lived node per agent (holds identity + all connections) |
-| ALPN | Protocol multiplexing — `agent-mail/1` for mail |
+| ALPN | Protocol multiplexing — `agent-mail/2` for mail |
 | QUIC streams | One bidirectional stream per mail exchange |
 | Discovery (n0 DNS / pkarr) | Resolving a NodeId to current dialing info |
 | Relays | Connectivity when both peers are behind NAT; hole-punch assist |
@@ -78,7 +77,7 @@ The transport pieces we use directly:
 ## Architecture at a glance
 
 ```
-┌──────────────┐   QUIC + agent-mail/1   ┌──────────────┐
+┌──────────────┐   QUIC + agent-mail/2   ┌──────────────┐
 │   Agent A    │ ◄─────────────────────► │   Agent B    │
 │  (this tool) │   direct, or via relay  │  (this tool) │
 └──────┬───────┘                         └──────┬───────┘
@@ -100,8 +99,19 @@ the network directly.
 
 ## Files & configuration
 
-All paths follow the XDG convention and can be relocated with one root
-override:
+**Multiple nodes on one box.** Every command accepts a global `--home DIR`
+flag (env: `AGENT_MAIL_HOME`) that points at one self-contained folder
+holding everything a node needs — secret key, allowlist, config, and mail
+store:
+
+```sh
+agent-mail init --home ./alice        # create a new private key + folder
+agent-mail daemon --home ./alice      # run it (same flag reattaches later)
+agent-mail init --home ./bob && agent-mail daemon --home ./bob   # a second node
+```
+
+Without `--home`, paths follow the XDG convention and can be relocated with
+env overrides:
 
 | Path | Override env var | Purpose |
 |---|---|---|
@@ -147,7 +157,7 @@ human = true
 
 ---
 
-## The agent-mail protocol (v1)
+## The agent-mail protocol (v2)
 
 A small, strict protocol on top of IROH's raw QUIC API. Design goals:
 debuggable by a human with `agent-mail debug`, forward-evolvable, and strict
@@ -155,8 +165,8 @@ about identity.
 
 ### Transport
 
-- **ALPN:** `agent-mail/1` (versioned; incompatible changes bump the version
-  and old versions are still accepted during a deprecation window).
+- **ALPN:** `agent-mail/2` (versioned; incompatible changes bump the version).
+  v1 nodes — which carried an `audience` field — are not interoperable.
 - **Connections:** one QUIC connection per peer pair, kept open while the
   daemon runs. Dial-on-demand; the accepting side uses IROH's `Router` with a
   protocol handler for the ALPN.
@@ -202,7 +212,7 @@ stream and send a `hello` frame (direction is symmetric — either peer may
 dial first, e.g. after a NAT event):
 
 ```json
-{ "v": 1, "type": "hello", "id": "<ulid>",
+{ "v": 2, "type": "hello", "id": "<ulid>",
   "agent": { "name": "agent-mail", "version": "0.1.0" },
   "caps": ["mail"],
   "since": 1727740800 }
@@ -217,7 +227,7 @@ dial first, e.g. after a NAT event):
 #### `send` — deliver a message
 
 ```json
-{ "v": 1, "type": "send", "id": "<frame-ulid>",
+{ "v": 2, "type": "send", "id": "<frame-ulid>",
   "msg": {
     "id": "<msg-ulid>",
     "thread_id": "<msg-ulid of thread root>",
@@ -225,7 +235,6 @@ dial first, e.g. after a NAT event):
     "from": "<sender-node-id-z32>",
     "to": "<recipient-node-id-z32>",
     "created_at": 1727740800,
-    "audience": "agent",
     "content_type": "text/plain",
     "body": "Found the bug. Fix is on branch fix/parser-crash."
   } }
@@ -233,20 +242,18 @@ dial first, e.g. after a NAT event):
 
 - `from`/`to` are the wire-level IROH NodeIds. If either doesn't match the
   actual QUIC connection peers, the receiver **must** reject with `error`.
-- `audience`: `"agent"` (default) or `"human"` — human-audience mail is
-  surfaced in the human-facing inbox view.
 - `content_type` starts as `text/plain` and `application/json`; extensible.
 - The sender half-closes the stream after the frame and awaits the response.
 
 #### `ack` / `error` — response frames
 
 ```json
-{ "v": 1, "type": "ack", "id": "<frame-ulid>", "of": "<msg-ulid>",
+{ "v": 2, "type": "ack", "id": "<frame-ulid>", "of": "<msg-ulid>",
   "received_at": 1727740801 }
 ```
 
 ```json
-{ "v": 1, "type": "error", "id": "<frame-ulid>", "of": "<msg-ulid|null>",
+{ "v": 2, "type": "error", "id": "<frame-ulid>", "of": "<msg-ulid|null>",
   "code": "not_allowed | identity_mismatch | too_large | malformed | internal",
   "message": "human-readable detail" }
 ```
@@ -314,12 +321,12 @@ TTY) launches the human mail client:
 
 - **Three-pane layout**: thread list → conversation view → compose — in the
   spirit of mutt/aerc, keyboard-driven, mouse optional.
-- **Inbox**: unread markers, audience filter (`all` / `human` / from agents),
-  per-peer grouping, live refresh as the daemon delivers.
-- **Reading**: full thread view with my-key vs. peer color coding, raw frame
-  inspection (`v` key — dumps the decoded envelope).
-- **Composing**: inline editor with subject-ish first line, `--human`/
-  `--agent` audience toggle, tab-completion of allowlisted peer names.
+- **Inbox**: unread markers, per-peer grouping, live refresh as the daemon
+  delivers.
+- **Reading**: full thread view with my-key vs. peer color coding, raw
+  message inspection (`v` key — dumps the stored row as JSON).
+- **Composing**: inline editor for the peer address and body, with
+  tab-completion of allowlisted peer names.
 - **Trust management**: allowlist editor (add/remove peers, paste a NodeId,
   see pending inbound attempts that were rejected).
 - **Status bar**: own NodeId (for sharing), connection state per peer
@@ -336,10 +343,11 @@ as the CLI and MCP server.
 |---|---|
 | `get_identity` | My NodeId, to give to other agents |
 | `send_message` | Send mail to an allowlisted peer (queues if offline) |
-| `list_inbox` | List inbox (filter: unread, thread, audience, peer) |
+| `list_inbox` | List inbox (filter: unread, peer) |
 | `read_message` | Full message by id |
 | `reply` | Reply into a thread |
 | `list_threads` | Conversation overview |
+| `list_outbox` | Pending + failed outgoing mail (nothing is silently dropped) |
 | `allow_add` / `allow_list` | Manage the trust list (gated by config) |
 
 The MCP server is a thin adapter over the same core the CLI uses; it talks
@@ -377,15 +385,15 @@ needed):
 
 ```
 src/
-  main.rs        # clap CLI entry
+  main.rs        # entry: logging, path resolution
+  cli.rs         # clap CLI: all subcommands, global --home flag
   identity.rs    # key generation/loading, NodeId formatting
-  allowlist.rs   # toml allowlist, re-read per connection
+  allowlist.rs   # toml allowlist, re-read per connection, atomic saves
   proto.rs       # envelope types, frame codec (u32le + JSON), error codes
-  handler.rs     # ProtocolHandler: hello handshake, allowlist gate, dispatch
-  daemon.rs      # Endpoint + Router, inbox writer, outbox retry loop
-  store.rs       # rusqlite schema: inbox, outbox, sent, threads
-  mcp.rs         # rmcp stdio server over store
-  human.rs       # audience filtering; TUI data helpers
+  daemon.rs      # Endpoint + Router, inbox writer, outbox retry, shutdown
+  store.rs       # rusqlite schema: inbox, outbox, threads; unit tests
+  ops.rs         # shared send/read/reply operations (CLI + MCP + TUI)
+  mcp.rs         # rmcp stdio server with embedded daemon
   tui.rs         # ratatui client: panes, compose, allowlist editor
 ```
 
@@ -415,13 +423,12 @@ Key dependencies: `iroh`, `clap`, `serde`/`serde_json`, `toml`, `rusqlite`,
    inbound rows and fans out. Shared ops live in `ops.rs`; skill ships at
    `.pi/skills/agent-mail/SKILL.md`; `scripts/mcp_smoke.py` drives a
    two-agent JSON-RPC conversation plus both subscription paths end to end.
-5. **M5 — TUI + human mode**: ✅ done. `agent-mail tui`: three-pane
-   keyboard-driven client (thread list, conversation with me/peer color
-   coding, status bar), compose/reply modal (Tab fields, F2 audience,
-   Ctrl-S send), allowlist editor showing rejected inbound attempts
-   (daemon records them), raw JSON view, audience filter
-   (all/human/agents), 2s live refresh. `scripts/tui_smoke.py` drives the
-   real TUI over a PTY, composes a message, and verifies delivery.
+5. **M5 — TUI**: ✅ done. `agent-mail tui`: three-pane keyboard-driven
+   client (thread list, conversation with me/peer color coding, status
+   bar), compose/reply modal (Tab fields, Ctrl-S send), allowlist editor
+   showing rejected inbound attempts (daemon records them), raw JSON view,
+   2s live refresh. `scripts/tui_smoke.py` drives the real TUI over a PTY,
+   composes a message, and verifies delivery.
 6. **M6 (later) — extensions**: `mailbox` capability, attachments via
    `iroh-blobs`, multi-device identity.
 

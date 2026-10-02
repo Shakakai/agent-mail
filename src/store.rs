@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
 use crate::config::Paths;
-use crate::proto::{Audience, Message};
+use crate::proto::Message;
 use crate::util::now_secs;
 
 /// Delivery attempts before an outgoing message is marked `failed`.
@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS messages (
     peer         TEXT NOT NULL,              -- the other endpoint id
     thread_id    TEXT NOT NULL,
     in_reply_to  TEXT,
-    audience     TEXT NOT NULL DEFAULT 'agent',
     content_type TEXT NOT NULL DEFAULT 'text/plain',
     body         TEXT NOT NULL,
     created_at   INTEGER NOT NULL,
@@ -62,7 +61,6 @@ pub struct StoredMessage {
     pub peer: String,
     pub thread_id: String,
     pub in_reply_to: Option<String>,
-    pub audience: String,
     pub content_type: String,
     pub body: String,
     pub created_at: u64,
@@ -83,8 +81,6 @@ pub struct Rejection {
 pub struct ThreadSummary {
     pub thread_id: String,
     pub peer: String,
-    /// Audience of the most recent message ("agent" or "human").
-    pub audience: String,
     pub message_count: u64,
     pub unread_count: u64,
     pub last_body: String,
@@ -116,6 +112,14 @@ impl Store {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(SCHEMA)?;
+        // Wire protocol v2 dropped the audience column; migrate stores
+        // created by v1 (SQLite >= 3.35 supports DROP COLUMN).
+        let has_audience = conn.prepare(
+            "SELECT 1 FROM pragma_table_info('messages') WHERE name = 'audience'",
+        )?.exists([])?;
+        if has_audience {
+            conn.execute_batch("ALTER TABLE messages DROP COLUMN audience;")?;
+        }
         #[cfg(unix)]
         lock_down_db_files(&paths.db);
         Ok(Self {
@@ -132,9 +136,9 @@ impl Store {
         let n = conn.execute(
             "INSERT OR IGNORE INTO messages
              (msg_key, remote_id, direction, from_id, to_id, peer, thread_id,
-              in_reply_to, audience, content_type, body, created_at,
+              in_reply_to, content_type, body, created_at,
               received_at, status)
-             VALUES (?1, ?2, 'in', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'unread')",
+             VALUES (?1, ?2, 'in', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'unread')",
             params![
                 key,
                 msg.id,
@@ -143,7 +147,6 @@ impl Store {
                 msg.from,
                 msg.thread_id,
                 msg.in_reply_to,
-                audience_str(msg.audience),
                 msg.content_type,
                 msg.body,
                 msg.created_at as i64,
@@ -163,7 +166,6 @@ impl Store {
         peer: &str,
         thread_id: &str,
         in_reply_to: Option<&str>,
-        audience: Audience,
         content_type: &str,
         body: &str,
         first_retry_secs: u64,
@@ -177,24 +179,22 @@ impl Store {
             from: me.to_string(),
             to: peer.to_string(),
             created_at: now,
-            audience,
             content_type: content_type.to_string(),
             body: body.to_string(),
         };
         self.conn.lock().unwrap().execute(
             "INSERT INTO messages
              (msg_key, remote_id, direction, from_id, to_id, peer, thread_id,
-              in_reply_to, audience, content_type, body, created_at, status,
+              in_reply_to, content_type, body, created_at, status,
               next_retry_at)
-             VALUES (?1, ?1, 'out', ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued',
-                     ?9 + ?10)",
+             VALUES (?1, ?1, 'out', ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, 'queued',
+                     ?8 + ?9)",
             params![
                 key,
                 me,
                 peer,
                 thread_id,
                 in_reply_to,
-                audience_str(audience),
                 content_type,
                 body,
                 now as i64,
@@ -237,7 +237,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let now = now_secs() as i64;
         let mut stmt = conn.prepare(
-            "SELECT msg_key, peer, thread_id, in_reply_to, audience, content_type,
+            "SELECT msg_key, peer, thread_id, in_reply_to, content_type,
                     body, created_at, from_id, to_id, attempts
              FROM messages
              WHERE direction = 'out' AND status IN ('queued', 'failed')
@@ -247,7 +247,6 @@ impl Store {
              LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![now, limit as i64, MAX_ATTEMPTS as i64], |row| {
-            let audience: String = row.get(4)?;
             Ok(QueuedMessage {
                 msg_key: row.get(0)?,
                 peer: row.get(1)?,
@@ -255,31 +254,27 @@ impl Store {
                     id: row.get(0)?,
                     thread_id: row.get(2)?,
                     in_reply_to: row.get(3)?,
-                    from: row.get(8)?,
-                    to: row.get(9)?,
-                    created_at: row.get::<_, i64>(7)? as u64,
-                    audience: parse_audience(&audience),
-                    content_type: row.get(5)?,
-                    body: row.get(6)?,
+                    from: row.get(7)?,
+                    to: row.get(8)?,
+                    created_at: row.get::<_, i64>(6)? as u64,
+                    content_type: row.get(4)?,
+                    body: row.get(5)?,
                 },
-                attempts: row.get::<_, i64>(10)? as u64,
+                attempts: row.get::<_, i64>(9)? as u64,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
-    pub fn list_inbox(&self, peer: Option<&str>, human_only: bool) -> Result<Vec<StoredMessage>> {
+    pub fn list_inbox(&self, peer: Option<&str>) -> Result<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut conditions = vec!["direction = 'in'".to_string()];
         if peer.is_some() {
             conditions.push("peer = ?1".to_string());
         }
-        if human_only {
-            conditions.push("audience = 'human'".to_string());
-        }
         let sql = format!(
             "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
-                    audience, content_type, body, created_at, received_at, read_at,
+                    content_type, body, created_at, received_at, read_at,
                     status, attempts
              FROM messages WHERE {} ORDER BY received_at DESC LIMIT 500",
             conditions.join(" AND ")
@@ -310,9 +305,6 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT thread_id, peer,
-                    (SELECT audience FROM messages m2
-                      WHERE m2.thread_id = messages.thread_id
-                      ORDER BY m2.created_at DESC LIMIT 1),
                     COUNT(*),
                     SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END),
                     (SELECT body FROM messages m2
@@ -329,11 +321,10 @@ impl Store {
             Ok(ThreadSummary {
                 thread_id: row.get(0)?,
                 peer: row.get(1)?,
-                audience: row.get(2)?,
-                message_count: row.get::<_, i64>(3)? as u64,
-                unread_count: row.get::<_, i64>(4)? as u64,
-                last_body: row.get(5)?,
-                last_at: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+                message_count: row.get::<_, i64>(2)? as u64,
+                unread_count: row.get::<_, i64>(3)? as u64,
+                last_body: row.get(4)?,
+                last_at: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -388,7 +379,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
-                    audience, content_type, body, created_at, received_at, read_at,
+                    content_type, body, created_at, received_at, read_at,
                     status, attempts
              FROM messages
              WHERE direction = 'out' AND status IN ('queued', 'failed')
@@ -404,7 +395,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
-                    audience, content_type, body, created_at, received_at, read_at,
+                    content_type, body, created_at, received_at, read_at,
                     status, attempts
              FROM messages WHERE thread_id = ?1 ORDER BY created_at",
         )?;
@@ -426,7 +417,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT msg_key, remote_id, direction, from_id, to_id, peer, thread_id, in_reply_to,
-                    audience, content_type, body, created_at, received_at, read_at,
+                    content_type, body, created_at, received_at, read_at,
                     status, attempts
              FROM messages WHERE msg_key = ?1",
             params![msg_key],
@@ -456,29 +447,14 @@ fn map_stored(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
         peer: row.get(5)?,
         thread_id: row.get(6)?,
         in_reply_to: row.get(7)?,
-        audience: row.get(8)?,
-        content_type: row.get(9)?,
-        body: row.get(10)?,
-        created_at: row.get::<_, i64>(11)? as u64,
-        received_at: row.get::<_, Option<i64>>(12)?.map(|v| v as u64),
-        read_at: row.get::<_, Option<i64>>(13)?.map(|v| v as u64),
-        status: row.get(14)?,
-        attempts: row.get::<_, i64>(15)? as u64,
+        content_type: row.get(8)?,
+        body: row.get(9)?,
+        created_at: row.get::<_, i64>(10)? as u64,
+        received_at: row.get::<_, Option<i64>>(11)?.map(|v| v as u64),
+        read_at: row.get::<_, Option<i64>>(12)?.map(|v| v as u64),
+        status: row.get(13)?,
+        attempts: row.get::<_, i64>(14)? as u64,
     })
-}
-
-fn audience_str(a: Audience) -> &'static str {
-    match a {
-        Audience::Agent => "agent",
-        Audience::Human => "human",
-    }
-}
-
-fn parse_audience(s: &str) -> Audience {
-    match s {
-        "human" => Audience::Human,
-        _ => Audience::Agent,
-    }
 }
 
 /// Mail bodies are plaintext and sensitive; keep the store files readable
@@ -505,7 +481,6 @@ fn lock_down_db_files(db: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::Audience;
 
     fn tmp_store() -> (Store, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("am-store-test-{}", ulid::Ulid::generate()));
@@ -522,7 +497,6 @@ mod tests {
             from: from.to_string(),
             to: to.to_string(),
             created_at: now_secs(),
-            audience: Audience::Agent,
             content_type: "text/plain".to_string(),
             body: "hello".to_string(),
         }
@@ -533,7 +507,7 @@ mod tests {
         let (store, dir) = tmp_store();
         assert!(store.record_incoming(&sample_msg("m1", "peer", "me")).unwrap());
         assert!(!store.record_incoming(&sample_msg("m1", "peer", "me")).unwrap());
-        assert_eq!(store.list_inbox(None, false).unwrap().len(), 1);
+        assert_eq!(store.list_inbox(None).unwrap().len(), 1);
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -541,7 +515,7 @@ mod tests {
     fn enqueue_schedules_first_retry_and_hides_from_due() {
         let (store, dir) = tmp_store();
         let msg = store
-            .enqueue_outgoing("me", "peer", "t1", None, Audience::Agent, "text/plain", "hi", 600)
+            .enqueue_outgoing("me", "peer", "t1", None, "text/plain", "hi", 600)
             .unwrap();
         // Not due immediately: the interactive send owns the first attempt.
         assert!(store.due_outgoing(50).unwrap().is_empty());
@@ -557,7 +531,7 @@ mod tests {
     fn zero_first_retry_is_due_at_once() {
         let (store, dir) = tmp_store();
         store
-            .enqueue_outgoing("me", "peer", "t1", None, Audience::Agent, "text/plain", "hi", 0)
+            .enqueue_outgoing("me", "peer", "t1", None, "text/plain", "hi", 0)
             .unwrap();
         assert_eq!(store.due_outgoing(50).unwrap().len(), 1);
         std::fs::remove_dir_all(dir).ok();
@@ -567,7 +541,7 @@ mod tests {
     fn retries_back_off_then_fail_visibly_at_max_attempts() {
         let (store, dir) = tmp_store();
         let msg = store
-            .enqueue_outgoing("me", "peer", "t1", None, Audience::Agent, "text/plain", "hi", 0)
+            .enqueue_outgoing("me", "peer", "t1", None, "text/plain", "hi", 0)
             .unwrap();
         for attempts in 1..MAX_ATTEMPTS {
             store.mark_retry(&msg.id, attempts, 30, 900).unwrap();
@@ -588,11 +562,11 @@ mod tests {
     fn loopback_writes_in_copy() {
         let (store, dir) = tmp_store();
         let msg = store
-            .enqueue_outgoing("me", "me", "t1", None, Audience::Human, "text/plain", "note", 0)
+            .enqueue_outgoing("me", "me", "t1", None, "text/plain", "note", 0)
             .unwrap();
         assert!(store.record_incoming(&msg).unwrap());
         store.mark_delivered(&msg.id, now_secs()).unwrap();
-        let inbox = store.list_inbox(None, true).unwrap();
+        let inbox = store.list_inbox(None).unwrap();
         assert_eq!(inbox.len(), 1);
         assert_eq!(inbox[0].body, "note");
         std::fs::remove_dir_all(dir).ok();

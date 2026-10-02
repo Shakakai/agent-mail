@@ -1,8 +1,14 @@
 //! Configuration paths and tunables.
 //!
-//! All paths follow the XDG convention and can be relocated with env vars
-//! (see README): `AGENT_MAIL_CONFIG_DIR`, `AGENT_MAIL_DATA_DIR`,
-//! `AGENT_MAIL_SECRET_KEY`, `AGENT_MAIL_ALLOWED_KEYS`.
+//! The simplest deployment is a single self-contained folder ("home"):
+//! `agent-mail init --home ./alice` creates one, and every command accepts
+//! `--home` (or the `AGENT_MAIL_HOME` env var) to use it. A home holds the
+//! secret key, allowlist, config.toml, and the mail store together, which
+//! is what lets one box run any number of independent nodes.
+//!
+//! Finer-grained overrides remain available: `AGENT_MAIL_CONFIG_DIR`,
+//! `AGENT_MAIL_DATA_DIR`, `AGENT_MAIL_SECRET_KEY`, `AGENT_MAIL_ALLOWED_KEYS`.
+//! Precedence: `--home` > `AGENT_MAIL_HOME` > separate config/data dirs > XDG.
 
 use std::path::PathBuf;
 
@@ -19,6 +25,29 @@ pub struct Paths {
 }
 
 impl Paths {
+    /// Resolve paths for a run. `home` (from the global `--home` flag)
+    /// unifies config and data into one folder; otherwise the env vars /
+    /// XDG defaults apply.
+    pub fn resolve(home: Option<PathBuf>) -> Result<Self> {
+        if let Some(home) = home.or_else(|| std::env::var_os("AGENT_MAIL_HOME").map(PathBuf::from)) {
+            let secret_key = std::env::var_os("AGENT_MAIL_SECRET_KEY")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join("secret-key"));
+            let allowed_keys = std::env::var_os("AGENT_MAIL_ALLOWED_KEYS")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join("allowed-keys.toml"));
+            let db = home.join("mail.db");
+            return Ok(Self {
+                config_dir: home.clone(),
+                data_dir: home.clone(),
+                secret_key,
+                allowed_keys,
+                db,
+            });
+        }
+        Self::from_env()
+    }
+
     pub fn from_env() -> Result<Self> {
         let config_dir = std::env::var_os("AGENT_MAIL_CONFIG_DIR")
             .map(PathBuf::from)

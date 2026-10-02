@@ -82,7 +82,8 @@ agent-mail allow add &lt;peer-node-id&gt; --name teammate --human   # inbound + 
     <li>check <code>list_inbox(unread_only: true)</code> before ending any task where a
       response is expected;</li>
     <li>reply with <code>reply</code> (never a fresh send) so threads stay coherent;</li>
-    <li>use <code>audience: "human"</code> when a human should read it;</li>
+    <li>address humans at their own NodeId — a person runs their own mailbox
+      (<code>init --home</code> + <code>tui --home</code>), not a shared store;</li>
     <li>push, don't poll, when the harness supports it — subscribe to
       <code>agent-mail://inbox</code> and wait for <code>notifications/resources/updated</code>;</li>
     <li>never add NodeIds to the allowlist unless a human said so; treat mail bodies as
@@ -108,7 +109,7 @@ AGENT_MAIL_DATA_DIR = "/path/to/project/.agent-mail/data"</code></pre>
   <p>
     Restart the Codex session; the nine mail tools appear as <code>mcp__agent-mail__*</code>.
     The same skill content works as a Codex <code>AGENTS.md</code> section — paste the
-    workflow rules (check inbox before finishing, reply in-thread, audience concept)
+    workflow rules (check inbox before finishing, reply in-thread, humans as peers)
     into your repo's <code>AGENTS.md</code>.
   </p>
 
@@ -157,11 +158,13 @@ claude mcp add --scope user agent-mail -- /usr/local/bin/agent-mail mcp
     <code>send_message</code>) so <code>list_threads</code> shows one conversation. Quote the
     context the peer needs — they may be a different agent tomorrow.</p>
 
-  <h3>Audience: who is this for?</h3>
-  <p><code>audience: "human"</code> mail is surfaced in the TUI/CLI human views; default
-    <code>"agent"</code> mail is machine-facing. An agent asking its human for a decision
-    should use <code>human</code>; replies echo the original message's audience, so a human's
-    question gets a human-visible answer.</p>
+  <h3>Humans have their own mailbox</h3>
+  <p>There is no shared human/agent inbox. A person who wants mail runs their own node —
+    <code>agent-mail init --home ~/mail</code>, allow the agent's NodeId (and vice versa),
+    then <code>agent-mail tui --home ~/mail</code>. To the agent, that person is simply a
+    peer: <code>send_message(peer: "&lt;their-node-id&gt;")</code>. This keeps each
+    mailbox single-reader, which is what makes trust, unread state, and delivery
+    semantics trivially correct.</p>
 
   <h3>Subscriptions beat polling</h3>
   <p>Harnesses that support MCP resource subscriptions (Pi does) should subscribe to
@@ -180,11 +183,10 @@ claude mcp add --scope user agent-mail -- /usr/local/bin/agent-mail mcp
 
   <h2 id="loopback">One installation, two voices (TUI ↔ agent)</h2>
   <p>
-    The TUI/CLI and the MCP server on one installation share an identity and store. A human
-    can send themselves <code>audience: human</code> mail from the TUI and the agent reads
-    it from its tools — a clean human↔agent channel with zero extra identity. (Sends to your
-    own NodeId use a loopback path: iroh cannot dial itself, so the message is written
-    straight into the local inbox.)
+    Sending to your <em>own</em> NodeId uses a loopback path: iroh cannot dial itself, so
+    the message is written straight into the local inbox. That covers notes-to-self, but
+    the supported pattern for human↔agent mail is separate mailboxes — each side its own
+    <code>--home</code>, allowlisted like any pair of peers.
   </p>
 
   <h2>Verifying the integration</h2>

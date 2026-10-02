@@ -96,11 +96,25 @@ EOF
 # with AGENT_MAIL_CONFIG_DIR=/etc/agent-mail and AGENT_MAIL_DATA_DIR=/var/lib/agent-mail
 sudo systemctl enable --now agent-mail</code></pre>
 
-  <h2 id="layout">Filesystem layout and env overrides</h2>
-  <p>Paths follow the XDG convention and can be relocated — per service, per container,
-    per agent. This is how one host runs many isolated identities:</p>
+  <h2 id="layout">Filesystem layout: one folder per node</h2>
+  <p>The simplest production layout is one self-contained folder per node, selected with
+    the global <code>--home</code> flag (or <code>AGENT_MAIL_HOME</code>):</p>
+  <pre><code>agent-mail init --home /var/lib/agent-mail/researcher
+agent-mail daemon --home /var/lib/agent-mail/researcher
+agent-mail tui      --home ~/mail          # a human's own mailbox, same mechanism</code></pre>
+  <p>Each home holds <code>secret-key</code> (0600), <code>allowed-keys.toml</code> (0600),
+    <code>config.toml</code>, and <code>mail.db</code> — everything that node needs. Back up
+    the folder, move it to another machine, or point a fresh binary at it: the node is the
+    folder.</p>
+  <p>Finer-grained relocation remains available via env vars — per service, per container,
+    per agent:</p>
   <table>
     <tr><th>Env var</th><th>Default</th><th>Purpose</th></tr>
+    <tr>
+      <td><code>AGENT_MAIL_HOME</code></td>
+      <td>—</td>
+      <td>Unify config + data into one folder (same as <code>--home</code>).</td>
+    </tr>
     <tr>
       <td><code>AGENT_MAIL_CONFIG_DIR</code></td>
       <td><code>~/.config/agent-mail</code></td>
@@ -124,12 +138,11 @@ sudo systemctl enable --now agent-mail</code></pre>
     </tr>
   </table>
   <div class="callout tip">
-    <p class="label">Pattern: one identity per agent</p>
-    <p>Two agents on one machine = two env sets. The
+    <p class="label">Pattern: one folder per agent</p>
+    <p>Two agents on one machine = two <code>--home</code> folders. The
       <a href="quickstart.html">quickstart</a> does exactly this with
-      <code>/tmp/am-alice</code> and <code>/tmp/am-bob</code>. For containers, bake the
-      env vars into the image and mount the config dir from a secret; the data dir from a
-      volume.</p>
+      <code>/tmp/am-alice</code> and <code>/tmp/am-bob</code>. For containers, mount the
+      home dir from a secret-backed volume; the node is entirely self-contained.</p>
   </div>
 
   <h2 id="config">config.toml — every option</h2>
@@ -226,19 +239,21 @@ agent-mail send bob --ticket "$(cat ticket.json)" -m "…"</code></pre>
 
   <h2 id="backup">Backup and recovery</h2>
   <ul>
-    <li><strong>Back up the config dir</strong> (secret key + allowlist) — losing the key
-      loses the address and all inbound capability peers have allowlisted.</li>
-    <li><strong>Back up the data dir</strong> (mail.db) if mail history matters. SQLite
-      backup tools or a file copy while stopped both work.</li>
-    <li><strong>Recovery</strong>: restore both dirs, start the daemon — the outbox resumes
-      retrying anything still queued, and history is intact.</li>
+    <li><strong>Back up the home folder</strong> (or the config + data dirs) — losing the
+      secret key loses the address and all inbound capability peers have allowlisted.</li>
+    <li><strong>The store</strong> (<code>mail.db</code>) holds history and the outbox.
+      SQLite backup tools or a file copy while stopped both work.</li>
+    <li><strong>Recovery</strong>: restore the folder, start the daemon with
+      <code>--home</code> — the outbox resumes retrying anything still queued, and history
+      is intact.</li>
   </ul>
 
   <h2>Multi-identity operations</h2>
   <pre><code># systemd template unit: one service per agent identity
 sudo systemctl enable --now agent-mail@researcher
 sudo systemctl enable --now agent-mail@reviewer
-# with per-unit Environment=AGENT_MAIL_CONFIG_DIR=/etc/agent-mail/%i</code></pre>
+# with per-unit Environment=AGENT_MAIL_HOME=/var/lib/agent-mail/%i
+# and ExecStart=/usr/local/bin/agent-mail daemon --home /var/lib/agent-mail/%i</code></pre>
   <p>For agent fleets, generate identities at provisioning time, exchange NodeIds through
     your normal secret channel (they are public keys — safe to pass through ticketing
     systems), and commit allowlists to config management.</p>

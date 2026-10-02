@@ -6,7 +6,6 @@ use iroh::{Endpoint, SecretKey, endpoint::presets};
 
 use crate::client;
 use crate::config::{Config, Paths};
-use crate::proto::Audience;
 use crate::store::{Store, StoredMessage, ThreadSummary};
 
 #[derive(Debug, serde::Serialize)]
@@ -32,7 +31,6 @@ pub async fn send_message(
     sk: &SecretKey,
     me: &str,
     peer_id: &str,
-    audience: Audience,
     body: &str,
     thread_id: Option<&str>,
     in_reply_to: Option<&str>,
@@ -53,7 +51,6 @@ pub async fn send_message(
         peer_id,
         &thread_id,
         in_reply_to,
-        audience,
         "text/plain",
         body,
         config.retry_base_secs,
@@ -104,7 +101,6 @@ pub fn list_inbox(
     paths: &Paths,
     peer: Option<&str>,
     unread_only: bool,
-    human_only: bool,
 ) -> Result<Vec<StoredMessage>> {
     let store = Store::open(paths)?;
     let peer_id = match peer {
@@ -119,7 +115,7 @@ pub fn list_inbox(
         }
         None => None,
     };
-    let mut rows = store.list_inbox(peer_id.as_deref(), human_only)?;
+    let mut rows = store.list_inbox(peer_id.as_deref())?;
     if unread_only {
         rows.retain(|r| r.read_at.is_none());
     }
@@ -144,10 +140,8 @@ pub fn list_threads(paths: &Paths) -> Result<Vec<ThreadSummary>> {
 }
 
 /// Reply to a received message, continuing its thread. Returns the wire
-/// `in_reply_to` (the original sender's message id), thread context, and
-/// the original message's audience (so replies stay human-addressed when
-/// the original was).
-pub fn reply_context(paths: &Paths, msg_key: &str) -> Result<(String, String, String, Audience)> {
+/// `in_reply_to` (the original sender's message id) and thread context.
+pub fn reply_context(paths: &Paths, msg_key: &str) -> Result<(String, String, String)> {
     let store = Store::open(paths)?;
     let original = store
         .get(msg_key)?
@@ -155,14 +149,9 @@ pub fn reply_context(paths: &Paths, msg_key: &str) -> Result<(String, String, St
     if original.direction != "in" {
         anyhow::bail!("can only reply to received messages");
     }
-    let audience = match original.audience.as_str() {
-        "human" => Audience::Human,
-        _ => Audience::Agent,
-    };
     Ok((
         original.from_id.clone(),
         original.thread_id.clone(),
         original.remote_id.clone(),
-        audience,
     ))
 }

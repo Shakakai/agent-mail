@@ -8,7 +8,6 @@ use iroh::{Endpoint, endpoint::presets};
 use crate::allowlist::{AllowList, PeerEntry};
 use crate::client;
 use crate::config::{Config, Paths};
-use crate::proto::Audience;
 use crate::store::Store;
 use crate::{daemon, identity, mcp, tui};
 
@@ -19,6 +18,12 @@ use crate::{daemon, identity, mcp, tui};
     about = "Peer-to-peer mail for AI agents (and humans) over IROH"
 )]
 struct Cli {
+    /// One self-contained folder holding the secret key, allowlist,
+    /// config, and mail store — everything this node needs. Use it to run
+    /// multiple independent nodes on one machine. (Env: AGENT_MAIL_HOME)
+    #[arg(long, global = true, value_name = "DIR")]
+    home: Option<std::path::PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -56,9 +61,6 @@ enum Commands {
         /// bypassing discovery. Useful on LANs and for debugging.
         #[arg(long)]
         ticket: Option<String>,
-        /// Intended audience on the receiving side.
-        #[arg(long, default_value = "agent")]
-        audience: String,
         /// Output the queued message as JSON.
         #[arg(long)]
         json: bool,
@@ -71,9 +73,6 @@ enum Commands {
     },
     /// List received messages.
     Inbox {
-        /// Only messages addressed to humans.
-        #[arg(long)]
-        human: bool,
         /// Filter by peer NodeId or name.
         #[arg(long)]
         peer: Option<String>,
@@ -123,8 +122,9 @@ enum AllowAction {
     },
 }
 
-pub async fn run(paths: Paths) -> Result<()> {
+pub async fn run() -> Result<()> {
     let cli = Cli::parse();
+    let paths = Paths::resolve(cli.home)?;
     let config = Config::load(&paths.config_dir)?;
     match cli.command {
         Commands::Init => cmd_init(&paths),
@@ -138,11 +138,10 @@ pub async fn run(paths: Paths) -> Result<()> {
             message,
             stdin,
             ticket,
-            audience,
             json,
-        } => cmd_send(&paths, &config, &peer, &message, stdin, ticket.as_deref(), &audience, json).await,
+        } => cmd_send(&paths, &config, &peer, &message, stdin, ticket.as_deref(), json).await,
         Commands::Addr { json } => cmd_addr(&paths, json).await,
-        Commands::Inbox { human, peer, json } => cmd_inbox(&paths, peer, human, json),
+        Commands::Inbox { peer, json } => cmd_inbox(&paths, peer, json),
         Commands::Outbox { json } => cmd_outbox(&paths, json),
         Commands::Read { msg_key, json } => cmd_read(&paths, &msg_key, json),
         Commands::Reply {
@@ -161,11 +160,13 @@ fn cmd_init(paths: &Paths) -> Result<()> {
     std::fs::create_dir_all(&paths.data_dir)?;
     let id = identity::node_id(&sk);
     println!("initialized agent-mail");
+    println!("  home:        {}", paths.config_dir.display());
     println!("  secret key:  {}", paths.secret_key.display());
     println!("  allowlist:   {}", paths.allowed_keys.display());
     println!("  database:    {}", paths.db.display());
     println!("  node id:     {id}");
     println!();
+    println!("run it:   agent-mail daemon --home {}", paths.config_dir.display());
     println!("share this node id with peers; they must allow it (and you theirs).");
     Ok(())
 }
@@ -226,14 +227,6 @@ fn read_body(message: &Option<String>, stdin: bool) -> Result<String> {
     }
 }
 
-fn parse_audience(s: &str) -> Result<Audience> {
-    match s {
-        "agent" => Ok(Audience::Agent),
-        "human" => Ok(Audience::Human),
-        _ => bail!("audience must be `agent` or `human`"),
-    }
-}
-
 async fn cmd_addr(paths: &Paths, json: bool) -> Result<()> {
     let sk = identity::load(paths)?;
     let endpoint = Endpoint::builder(presets::N0)
@@ -275,14 +268,12 @@ async fn cmd_send(
     message: &Option<String>,
     stdin: bool,
     ticket: Option<&str>,
-    audience: &str,
     json: bool,
 ) -> Result<()> {
     let sk = identity::load(paths)?;
     let me = identity::node_id(&sk);
     let list = AllowList::load(&paths.allowed_keys)?;
     let peer_id = resolve_peer(&list, peer)?;
-    let audience = parse_audience(audience)?;
     let body = read_body(message, stdin)?;
     if body.is_empty() {
         bail!("message body is empty");
@@ -308,7 +299,6 @@ async fn cmd_send(
         &peer_id,
         &thread_id,
         None,
-        audience,
         "text/plain",
         &body,
         config.retry_base_secs,
@@ -391,7 +381,7 @@ fn cmd_outbox(paths: &Paths, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_inbox(paths: &Paths, peer: Option<String>, human: bool, json: bool) -> Result<()> {
+fn cmd_inbox(paths: &Paths, peer: Option<String>, json: bool) -> Result<()> {
     let store = Store::open(paths)?;
     let peer_id = match &peer {
         Some(p) => {
@@ -400,7 +390,7 @@ fn cmd_inbox(paths: &Paths, peer: Option<String>, human: bool, json: bool) -> Re
         }
         None => None,
     };
-    let rows = store.list_inbox(peer_id.as_deref(), human)?;
+    let rows = store.list_inbox(peer_id.as_deref())?;
     if json {
         println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(());
@@ -411,10 +401,9 @@ fn cmd_inbox(paths: &Paths, peer: Option<String>, human: bool, json: bool) -> Re
     }
     for r in &rows {
         let unread = if r.read_at.is_none() { "*" } else { " " };
-        let human = if r.audience == "human" { " [human]" } else { "" };
         let preview: String = r.body.chars().take(60).collect();
         println!(
-            "{unread} {}  {}  {} ago  {human}  {}",
+            "{unread} {}  {}  {} ago  {}",
             &r.msg_key[..8.min(r.msg_key.len())],
             r.from_id,
             humanize(crate::util::now_secs().saturating_sub(r.created_at)),
@@ -479,15 +468,11 @@ async fn cmd_reply(
     let reply_to = Some(original.remote_id.as_str());
     let thread_id = original.thread_id.clone();
     let peer_id = original.from_id.clone();
-    // Replies keep the original message's audience: human mail gets human
-    // replies, so the human filter on the receiving side still sees them.
-    let audience = parse_audience(&original.audience)?;
     let msg = store.enqueue_outgoing(
         &me,
         &peer_id,
         &thread_id,
         reply_to,
-        audience,
         "text/plain",
         &body,
         config.retry_base_secs,

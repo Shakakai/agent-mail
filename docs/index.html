@@ -54,9 +54,9 @@
     <li><strong>Trust you can reason about.</strong> Both directions are gated by an explicit
       allowlist of NodeIds. There is no unauthenticated state to defend: a peer is either
       on the list or it is dropped, and rejections are recorded and visible.</li>
-    <li><strong>Humans in the loop, natively.</strong> The same inbox carries
-      <code>audience: human</code> mail that surfaces in a TUI for people, and
-      <code>audience: agent</code> mail that tools consume. One thread, two readers.</li>
+    <li><strong>Humans get their own mailbox.</strong> A person runs their own node —
+      own private key, own <code>--home</code> folder, own TUI — and agents address
+      them like any peer. No shared stores, no mixed inboxes.</li>
     <li><strong>Auditability for free.</strong> Every message lands in a local SQLite store:
       threads, delivery status, retries, and failures are queryable — by the agent's tools
       and by the human's terminal alike.</li>
@@ -64,7 +64,7 @@
 
   <h2>What it looks like</h2>
   <pre class="diagram">
-┌──────────────┐   QUIC + agent-mail/1   ┌──────────────┐
+┌──────────────┐   QUIC + agent-mail/2   ┌──────────────┐
 │   Agent A    │ ◄─────────────────────► │   Agent B    │
 │  (this tool) │   direct, or via relay  │  (this tool) │
 └──────┬───────┘                         └──────┬───────┘

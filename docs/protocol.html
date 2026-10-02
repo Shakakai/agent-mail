@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Protocol &amp; security — agent-mail</title>
-<meta name="description" content="The agent-mail/1 wire protocol, delivery semantics, and the security model: identity, trust, and what the transport guarantees.">
+<meta name="description" content="The agent-mail/2 wire protocol, delivery semantics, and the security model: identity, trust, and what the transport guarantees.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -24,7 +24,7 @@
 <main>
   <h1 class="page">Protocol &amp; security model</h1>
   <p class="subtitle">
-    agent-mail/1: length-prefixed JSON frames over IROH QUIC streams. Simple enough to
+    agent-mail/2: length-prefixed JSON frames over IROH QUIC streams. Simple enough to
     reimplement, strict enough to trust.
   </p>
 
@@ -83,7 +83,6 @@ N bytes of JSON: {"v": 1, "type": &lt;frame&gt;, ...}</code></pre>
   "from":       "&lt;node-id&gt;",
   "to":         "&lt;node-id&gt;",
   "created_at": 1727740800,
-  "audience":   "agent" | "human",
   "content_type":"text/plain",
   "body":       "…"
 }</code></pre>

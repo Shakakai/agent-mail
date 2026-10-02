@@ -14,7 +14,6 @@ use crate::allowlist::{AllowList, PeerEntry};
 use crate::config::{Config, Paths};
 use crate::identity;
 use crate::ops;
-use crate::proto::Audience;
 use crate::store::{Rejection, Store, StoredMessage, ThreadSummary};
 
 const REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
@@ -23,39 +22,6 @@ const REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
 enum Focus {
     Threads,
     Messages,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Filter {
-    All,
-    Human,
-    Agents,
-}
-
-impl Filter {
-    fn next(self) -> Self {
-        match self {
-            Filter::All => Filter::Human,
-            Filter::Human => Filter::Agents,
-            Filter::Agents => Filter::All,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Filter::All => "all",
-            Filter::Human => "human",
-            Filter::Agents => "agents",
-        }
-    }
-
-    fn keep(self, t: &ThreadSummary) -> bool {
-        match self {
-            Filter::All => true,
-            Filter::Human => t.audience == "human",
-            Filter::Agents => t.audience != "human",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,7 +34,6 @@ enum ComposeField {
 struct Compose {
     peer: String,
     body: String,
-    audience: Audience,
     field: ComposeField,
     reply_to: Option<String>, // msg_key being replied to
     status: String,
@@ -79,7 +44,6 @@ impl Compose {
         Self {
             peer: peer.into(),
             body: String::new(),
-            audience: Audience::Agent,
             field: ComposeField::Peer,
             reply_to,
             status: String::new(),
@@ -111,7 +75,6 @@ pub struct App {
     selected_thread: usize,
     selected_msg: usize,
     focus: Focus,
-    filter: Filter,
     backlog: u64,
     outbox_failed: u64,
     modal: Option<Modal>,
@@ -136,7 +99,6 @@ impl App {
             selected_thread: 0,
             selected_msg: 0,
             focus: Focus::Threads,
-            filter: Filter::All,
             backlog: 0,
             outbox_failed: 0,
             modal: None,
@@ -163,12 +125,7 @@ impl App {
             .iter()
             .map(|e| (e.node_id.clone(), e.name.clone().unwrap_or_default()))
             .collect();
-        self.threads = self
-            .store
-            .list_threads()?
-            .into_iter()
-            .filter(|t| self.filter.keep(t))
-            .collect();
+        self.threads = self.store.list_threads()?;
         self.selected_thread = self.selected_thread.min(self.threads.len().saturating_sub(1));
         self.load_messages()?;
         let (pending, failed) = self.store.outbox_counts();
@@ -213,7 +170,7 @@ impl App {
             let peer_id = peer_id?;
             let (thread, reply_to) = match &c.reply_to {
                 Some(key) => {
-                    let (_, thread, remote, _) = ops::reply_context(&self.paths, key)?;
+                    let (_, thread, remote) = ops::reply_context(&self.paths, key)?;
                     (Some(thread), Some(remote))
                 }
                 None => (None, None),
@@ -224,7 +181,6 @@ impl App {
                 &self.secret_key,
                 &self.me,
                 &peer_id,
-                c.audience,
                 &c.body,
                 thread.as_deref(),
                 reply_to.as_deref(),
@@ -327,10 +283,6 @@ impl App {
             (KeyCode::Char('g'), _) => {
                 let _ = self.refresh();
             }
-            (KeyCode::Char('f'), _) => {
-                self.filter = self.filter.next();
-                let _ = self.refresh();
-            }
             (KeyCode::Enter, _) if self.focus == Focus::Threads => {
                 let _ = self.open_thread();
             }
@@ -410,12 +362,6 @@ impl App {
                         ComposeField::Body => ComposeField::Peer,
                     };
                 }
-                (KeyCode::F(2), _) => {
-                    c.audience = match c.audience {
-                        Audience::Agent => Audience::Human,
-                        Audience::Human => Audience::Agent,
-                    };
-                }
                 (KeyCode::Enter, m) | (KeyCode::Char('s'), m)
                     if m.contains(KeyModifiers::CONTROL) =>
                 {
@@ -425,7 +371,6 @@ impl App {
                         done = Some(Compose {
                             peer: c.peer.clone(),
                             body: c.body.clone(),
-                            audience: c.audience,
                             field: c.field,
                             reply_to: c.reply_to.clone(),
                             status: c.status.clone(),
@@ -585,13 +530,12 @@ impl App {
                 } else {
                     " ".to_string()
                 };
-                let tag = if t.audience == "human" { "◉ " } else { "  " };
                 let preview: String = t.last_body.chars().take(30).collect();
                 let when = t
                     .last_at
                     .map(|at| age(crate::util::now_secs().saturating_sub(at)))
                     .unwrap_or_default();
-                let line = format!("{tag}{unread}{peer} — {preview} ({when})");
+                let line = format!("{unread}{peer} — {preview} ({when})");
                 let mut item = ListItem::new(line);
                 if t.unread_count > 0 {
                     item = item.style(Style::default().add_modifier(Modifier::BOLD));
@@ -603,7 +547,7 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(format!(" threads [{}] ", self.filter.label())),
+                    .title(" threads "),
             )
             .highlight_style(Style::default().bg(Color::DarkGray))
             .highlight_symbol("▶ ");
@@ -625,9 +569,8 @@ impl App {
             .map(|(i, m)| {
                 let mine = m.direction == "out";
                 let who = if mine { "me" } else { "peer" };
-                let tag = if m.audience == "human" { " ◉human" } else { "" };
                 let header = format!(
-                    "{} {}{tag} · {}",
+                    "{} {} · {}",
                     who,
                     if mine {
                         short(&m.to_id)
@@ -667,9 +610,8 @@ impl App {
             format!("outbox:{}", self.backlog)
         };
         let text = format!(
-            "id {} │ filter:{} │ {} │ {}{}\nTab pane · j/k move · Enter open · c compose · r reply · v raw · a allowlist · f filter · g refresh · ? help · q quit",
+            "id {} │ {} │ {}{}\nTab pane · j/k move · Enter open · c compose · r reply · v raw · a allowlist · g refresh · ? help · q quit",
             short(&self.me),
-            self.filter.label(),
             outbox,
             if self.last_status.is_empty() { "" } else { "│ " },
             self.last_status,
@@ -693,13 +635,9 @@ impl App {
         if let Some(Modal::Compose(c)) = &self.modal {
             let area = self.centered(f, 80, 70);
             f.render_widget(Clear, area);
-            let aud = match c.audience {
-                Audience::Agent => "agent",
-                Audience::Human => "human",
-            };
             let title = match &c.reply_to {
-                Some(_) => " reply (Ctrl-S send · F2 audience · Tab field · Esc cancel) ",
-                None => " compose (Ctrl-S send · F2 audience · Tab field · Esc cancel) ",
+                Some(_) => " reply (Ctrl-S send · Tab field · Esc cancel) ",
+                None => " compose (Ctrl-S send · Tab field · Esc cancel) ",
             };
             let peer_style = if c.field == ComposeField::Peer {
                 Style::default().bg(Color::DarkGray)
@@ -715,10 +653,6 @@ impl App {
                 Line::from(vec![
                     Span::styled("to: ", Style::default().fg(Color::Yellow)),
                     Span::styled(&c.peer, peer_style),
-                ]),
-                Line::from(vec![
-                    Span::styled("audience: ", Style::default().fg(Color::Yellow)),
-                    Span::raw(aud),
                 ]),
                 Line::from(""),
                 Span::styled(c.body.as_str(), body_style).into(),
@@ -809,11 +743,10 @@ agent-mail TUI keys
   r          reply to latest message in thread
   v          raw JSON view of selected message
   a          allowlist editor (add/remove, rejected attempts)
-  f          cycle audience filter: all → human → agents
   g          refresh
   q          quit
 
-Compose: Tab switch field · F2 toggle audience · Ctrl-S send · Esc cancel
+Compose: Tab switch field · Ctrl-S send · Esc cancel
 ";
         let p = Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(" help (Esc close) "));
         f.render_widget(p, area);

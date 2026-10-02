@@ -1,6 +1,6 @@
 //! agent-mail: peer-to-peer mail for AI agents (and humans) over IROH.
 //!
-//! Implements the `agent-mail/1` protocol described in the project README:
+//! Implements the `agent-mail/2` protocol described in the project README:
 //! length-prefixed JSON frames over IROH QUIC streams, an allowlist-based
 //! trust model, and a persistent outbox with retry for offline peers.
 
@@ -17,8 +17,6 @@ mod store;
 mod tui;
 mod util;
 
-use config::Paths;
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Logs must never touch stdout: `agent-mail mcp` speaks JSON-RPC there.
@@ -29,6 +27,5 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "agent_mail=info".into()),
         )
         .init();
-    let paths = Paths::from_env()?;
-    cli::run(paths).await
+    cli::run().await
 }
