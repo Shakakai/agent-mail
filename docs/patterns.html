@@ -79,15 +79,17 @@
     you — and the location of any participant is irrelevant to the code.
   </p>
   <figure class="diagram-card">
-    <!-- Mermaid source (rendered offline to SVG; edit + re-render to change):
+    <!-- Mermaid source (rendered offline to SVG; edit + re-render to change).
+         Note: '--&gt;' is written as '→' here because arrow sequences
+         would terminate this HTML comment early.
          flowchart TD
-           YOU(["you · TUI or chat"]) --> MGR["manager agent<br/>Pi / Codex / Claude Code<br/>MCP tools"]
-           MGR <-- "agent-mail/3 · QUIC" --> HOME["home PC<br/>sub-agent"]
-           MGR <-- "mail" --> CRON["cron agent"]
-           MGR <-- "mail" --> SWARM["swarm workers"]
-           MGR <-- "mail" --> HUMAN["human<br/>own mailbox + TUI"]
-           MGR <-- "mail" --> AWS["AWS VM"]
-           MGR <-- "mail" --> CF["Cloudflare worker"]
+           YOU(["you · TUI or chat"]) → MGR["manager agent<br/>Pi / Codex / Claude Code<br/>MCP tools"]
+           MGR ⇄ "agent-mail/3 · QUIC" HOME["home PC<br/>sub-agent"]
+           MGR ⇄ "mail" CRON["cron agent"]
+           MGR ⇄ "mail" SWARM["swarm workers"]
+           MGR ⇄ "mail" HUMAN["human<br/>own mailbox + TUI"]
+           MGR ⇄ "mail" AWS["AWS VM"]
+           MGR ⇄ "mail" CF["Cloudflare worker"]
     -->
     <img src="diagrams/manager-mesh.svg"
          alt="Topology: you chat with a manager agent, which exchanges agent-mail with a home-PC sub-agent, a cron agent, swarm workers, a human running their own mailbox and TUI, and cloud agents on AWS and Cloudflare — all over one messaging surface.">
