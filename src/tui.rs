@@ -428,7 +428,7 @@ impl App {
                         match list.add(PeerEntry {
                             node_id,
                             name: None,
-                            human: false,
+                            description: None,
                         }) {
                             Ok(()) => {
                                 *input = None;
@@ -685,7 +685,6 @@ impl App {
                 Style::default().fg(Color::Yellow),
             ))];
             for (i, e) in entries.iter().enumerate() {
-                let kind = if e.human { "human" } else { "agent" };
                 let name = e.name.as_deref().unwrap_or("");
                 let style = if i == *selected {
                     Style::default().bg(Color::DarkGray)
@@ -693,9 +692,16 @@ impl App {
                     Style::default()
                 };
                 lines.push(Line::from(Span::styled(
-                    format!("  {name}  {kind}  {}", e.node_id),
+                    format!("  {name}  {}", e.node_id),
                     style,
                 )));
+                if let Some(d) = &e.description {
+                    let desc: String = d.chars().take(52).collect();
+                    lines.push(Line::from(Span::styled(
+                        format!("      {desc}"),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
             }
             if let Some(text) = input {
                 lines.push(Line::from(Span::styled(

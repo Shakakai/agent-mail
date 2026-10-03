@@ -148,7 +148,9 @@ Attachment = {
   <ol>
     <li>Each node maintains an allowlist of peer NodeIds, applied to <strong>both</strong>
       directions: inbound connections from unlisted keys are dropped before any envelope is
-      read, and outbound sends resolve peers through the same list.</li>
+      read, and outbound sends resolve peers through the same list. Entries carry an
+      optional name and an optional free-form <code>description</code> — context about what
+      the peer is and when to involve it, surfaced to agents by listing tools.</li>
     <li>The allowlist is re-read per connection; edits take effect without restart. File
       updates SHOULD be atomic (write-temp-then-rename).</li>
     <li>On receipt of a <code>send</code>, the receiver MUST verify

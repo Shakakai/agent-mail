@@ -48,7 +48,8 @@
     <tr>
       <td><code>allow add</code></td>
       <td>Allow a peer NodeId (both directions). Human-gated by design.</td>
-      <td><code>-n &lt;name&gt;</code> alias · <code>--human</code> mark as human peer</td>
+      <td><code>-n &lt;name&gt;</code> alias · <code>-d &lt;text&gt;</code> description (free-form
+        context agents see in <code>allow list</code>)</td>
     </tr>
     <tr>
       <td><code>allow list</code> / <code>allow remove</code></td>
@@ -164,11 +165,11 @@
     <tr>
       <td><code>allow_list</code></td>
       <td>—</td>
-      <td>Allowlisted peers (NodeId, name, human flag).</td>
+      <td>Allowlisted peers: NodeId, name, and any description (free-form context for agents).</td>
     </tr>
     <tr>
       <td><code>allow_add</code></td>
-      <td><code>node_id</code>, <code>name?</code>, <code>human?</code></td>
+      <td><code>node_id</code>, <code>name?</code>, <code>description?</code></td>
       <td>Disabled by default (config <code>mcp_allow_trust_changes</code>) — trust changes
         belong to humans.</td>
     </tr>

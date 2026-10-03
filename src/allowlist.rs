@@ -13,8 +13,11 @@ pub struct PeerEntry {
     pub node_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default)]
-    pub human: bool,
+    /// Free-form context about this peer: what it is, what it's for, when
+    /// to involve it. Surfaced to agents in allow_list so they know how
+    /// (and whether) to interact with the contact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -147,11 +150,20 @@ mod tests {
         let (_dir, path) = tmp_path("roundtrip");
         let id = node_id();
         let mut list = AllowList::load_or_create(&path).unwrap();
-        list.add(PeerEntry { node_id: id.clone(), name: Some("peer-a".into()), human: false }).unwrap();
+        list.add(PeerEntry {
+            node_id: id.clone(),
+            name: Some("peer-a".into()),
+            description: Some("overnight research VM".into()),
+        })
+        .unwrap();
         let loaded = AllowList::load(&path).unwrap();
         assert!(loaded.contains(&id.parse().unwrap()));
         assert_eq!(loaded.resolve("peer-a").unwrap().node_id, id);
         assert_eq!(loaded.resolve(&id).unwrap().name.as_deref(), Some("peer-a"));
+        assert_eq!(
+            loaded.resolve(&id).unwrap().description.as_deref(),
+            Some("overnight research VM")
+        );
         let mut loaded = loaded;
         let removed = loaded.remove("peer-a").unwrap();
         assert_eq!(removed.node_id, id);
@@ -163,10 +175,10 @@ mod tests {
     fn add_rejects_invalid_node_id_and_duplicates() {
         let (_dir, path) = tmp_path("invalid");
         let mut list = AllowList::load_or_create(&path).unwrap();
-        assert!(list.add(PeerEntry { node_id: "not-a-key".into(), name: None, human: false }).is_err());
+        assert!(list.add(PeerEntry { node_id: "not-a-key".into(), name: None, description: None }).is_err());
         let id = node_id();
-        list.add(PeerEntry { node_id: id.clone(), name: None, human: false }).unwrap();
-        assert!(list.add(PeerEntry { node_id: id.clone(), name: None, human: false }).is_err());
+        list.add(PeerEntry { node_id: id.clone(), name: None, description: None }).unwrap();
+        assert!(list.add(PeerEntry { node_id: id.clone(), name: None, description: None }).is_err());
         std::fs::remove_dir_all(_dir).ok();
     }
 
@@ -180,10 +192,30 @@ mod tests {
     }
 
     #[test]
+    fn legacy_human_field_still_loads() {
+        let (_dir, path) = tmp_path("legacy");
+        std::fs::write(
+            &path,
+            "[[peer]]\nnode_id = \"",
+        )
+        .unwrap();
+        let id = node_id();
+        std::fs::write(
+            &path,
+            format!("[[peer]]\nnode_id = \"{id}\"\nname = \"old\"\nhuman = true\n"),
+        )
+        .unwrap();
+        let list = AllowList::load(&path).unwrap();
+        assert_eq!(list.entries.len(), 1);
+        assert_eq!(list.entries[0].name.as_deref(), Some("old"));
+        std::fs::remove_dir_all(_dir).ok();
+    }
+
+    #[test]
     fn save_is_atomic_no_tmp_left() {
         let (_dir, path) = tmp_path("atomic");
         let mut list = AllowList::load_or_create(&path).unwrap();
-        list.add(PeerEntry { node_id: node_id(), name: Some("x".into()), human: true }).unwrap();
+        list.add(PeerEntry { node_id: node_id(), name: Some("x".into()), description: None }).unwrap();
         let tmp = path.with_extension("tmp");
         assert!(!tmp.exists(), "tmp file must not linger after save");
         #[cfg(unix)]

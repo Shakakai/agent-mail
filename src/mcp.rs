@@ -84,9 +84,11 @@ pub struct AllowAddParams {
     /// Friendly label.
     #[serde(default)]
     pub name: Option<String>,
-    /// Mark as a human peer.
+    /// Free-form context for agents: what this peer is and when to
+    /// involve it. Returned by allow_list so agents know how (and
+    /// whether) to interact with the contact.
     #[serde(default)]
-    pub human: Option<bool>,
+    pub description: Option<String>,
 }
 
 /// One subscriber to `agent-mail://inbox`: either a legacy
@@ -158,7 +160,7 @@ impl MailMcp {
         }))
     }
 
-    #[tool(description = "List allowlisted peers (NodeId, name, human flag).")]
+    #[tool(description = "List allowlisted peers: NodeId, name, and any description (free-form context about what the peer is and when to involve it).")]
     fn allow_list(&self) -> std::result::Result<String, ErrorData> {
         let list = AllowList::load(&self.paths.allowed_keys)
             .map_err(|e| Self::internal(format!("{e:#}")))?;
@@ -177,10 +179,14 @@ impl MailMcp {
         list.add(PeerEntry {
             node_id: p.node_id.clone(),
             name: p.name.clone(),
-            human: p.human.unwrap_or(false),
+            description: p.description.clone(),
         })
         .map_err(|e| Self::bad_request(format!("{e:#}")))?;
-        Ok(Self::json(&serde_json::json!({"added": p.node_id, "name": p.name})))
+        Ok(Self::json(&serde_json::json!({
+            "added": p.node_id,
+            "name": p.name,
+            "description": p.description,
+        })))
     }
 
     #[tool(description = "Send a message to an allowlisted peer. Delivers immediately if the peer is online, otherwise queues for the daemon to retry (at-least-once). Returns the message key and status.")]

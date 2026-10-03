@@ -119,9 +119,10 @@ enum AllowAction {
         node_id: String,
         #[arg(short, long)]
         name: Option<String>,
-        /// Mark this peer as a human (mail surfaced to human inboxes).
-        #[arg(long)]
-        human: bool,
+        /// Free-form context for agents: what this peer is and when to
+        /// involve it (returned by `allow list`).
+        #[arg(short, long)]
+        description: Option<String>,
     },
     List,
     Remove {
@@ -197,13 +198,13 @@ fn cmd_allow(paths: &Paths, action: AllowAction) -> Result<()> {
         AllowAction::Add {
             node_id,
             name,
-            human,
+            description,
         } => {
             let display = name.clone().unwrap_or_else(|| node_id.clone());
             list.add(PeerEntry {
                 node_id,
                 name,
-                human,
+                description,
             })?;
             println!("added `{display}` to the allowlist");
         }
@@ -212,9 +213,12 @@ fn cmd_allow(paths: &Paths, action: AllowAction) -> Result<()> {
                 println!("allowlist is empty — no peers may connect");
             }
             for e in &list.entries {
-                let kind = if e.human { "human" } else { "agent" };
                 let name = e.name.as_deref().unwrap_or("");
-                println!("{}\t{kind}\t{}", e.node_id, name);
+                println!("{}\t{}", e.node_id, name);
+                if let Some(d) = &e.description {
+                    let desc: String = d.chars().take(72).collect();
+                    println!("    {desc}");
+                }
             }
         }
         AllowAction::Remove { query } => {

@@ -316,11 +316,11 @@ path — it adds real trust/flood complexity — but the ALPN is reserved:
 ```
 agent-mail id                      # print my NodeId (to hand to a peer)
 agent-mail init                    # generate identity, config, empty allowlist
-agent-mail allow add <node-id> [-n name] [--human]
+agent-mail allow add <node-id> [-n name] [-d "context for agents"]
 agent-mail allow list | remove
 
 agent-mail send <node-id-or-name> [-s subject-ish] [-m body] [--stdin]
-agent-mail inbox [--human] [--json]
+agent-mail inbox [--peer name] [--json]
 agent-mail read <msg-id> [--json]
 agent-mail reply <msg-id> [-m body] [--stdin]
 

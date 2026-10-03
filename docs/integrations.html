@@ -37,7 +37,8 @@
   <h2 id="prerequisite">Prerequisite: identity + allowlist</h2>
   <pre><code>agent-mail init                          # once per installation
 agent-mail id                            # share this NodeId with peers
-agent-mail allow add &lt;peer-node-id&gt; --name teammate --human   # inbound + outbound gate</code></pre>
+agent-mail allow add &lt;peer-node-id&gt; --name teammate \
+    --description "who they are, when to involve them"   # inbound + outbound gate</code></pre>
   <p>Both sides must allow each other — before any mail flows, exchange NodeIds
     (they are public keys; safe to post in a ticket or chat).</p>
 
