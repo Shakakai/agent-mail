@@ -32,7 +32,9 @@
     setup</a>.</p>
 
   <h2 id="cli">CLI</h2>
-  <pre><code>agent-mail &lt;COMMAND&gt;</code></pre>
+  <pre><code>agentmail &lt;COMMAND&gt;   # or: am &lt;COMMAND&gt;</code></pre>
+  <p>The installer links <code>am</code> as a short alias — only if no other tool on your
+    system already answers to that name.</p>
   <table>
     <tr><th>Command</th><th>Purpose</th><th>Key flags</th></tr>
     <tr>
@@ -110,7 +112,7 @@
     </tr>
   </table>
 
-  <h2 id="mcp">MCP server (<code>agent-mail mcp</code>)</h2>
+  <h2 id="mcp">MCP server (<code>agentmail mcp</code>)</h2>
   <p>Stdio transport, one embedded daemon per session, tools prefixed
     <code>mcp__agent-mail__*</code> in most harnesses. Results are JSON text; errors are
     proper JSON-RPC errors.</p>

@@ -30,9 +30,9 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - run: cargo build
       - name: Set up two test identities
-        run: scripts/mcp_smoke_setup.sh target/debug/agent-mail
+        run: scripts/mcp_smoke_setup.sh target/debug/agentmail
       - name: Drive two MCP servers over stdio
-        run: python3 scripts/mcp_smoke.py target/debug/agent-mail
+        run: python3 scripts/mcp_smoke.py target/debug/agentmail
 
   build:
     name: Build binaries

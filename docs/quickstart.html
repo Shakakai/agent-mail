@@ -48,9 +48,11 @@
         <button type="button" class="install-copy" data-install-copy>Copy</button>
       </div>
     </div>
-  <p>Prefer to build from source, need an unreleased development build, or want a Windows
-    binary? See the <a href="downloads.html">downloads page</a> — and verify any download
-    with <code>sha256sum -c SHA256SUMS</code>.</p>
+  <p>The installer also links <code>am</code> as a short alias (skipped automatically if
+    another tool already owns that name). Prefer to build from source, need an unreleased
+    development build, or want a Windows binary? See the
+    <a href="downloads.html">downloads page</a> — and verify any download with
+    <code>sha256sum -c SHA256SUMS</code>.</p>
 
   <div class="step">
     <h3><span class="num">1</span>Create two identities</h3>
@@ -60,20 +62,20 @@
       so any number of independent nodes can run on one machine:
     </p>
     <pre><code># Agent "alice" — creates the folder, the private key, everything:
-agent-mail init --home /tmp/am-alice
-ALICE_ID=$(agent-mail --home /tmp/am-alice id)
+agentmail init --home /tmp/am-alice
+ALICE_ID=$(agentmail --home /tmp/am-alice id)
 
 # Agent "bob":
-agent-mail init --home /tmp/am-bob
-BOB_ID=$(agent-mail --home /tmp/am-bob id)
+agentmail init --home /tmp/am-bob
+BOB_ID=$(agentmail --home /tmp/am-bob id)
 
 echo "alice=$ALICE_ID"; echo "bob=$BOB_ID"</code></pre>
     <p>
       Mail flows only between allowlisted keys, in <em>both</em> directions — so each side
       must allow the other:
     </p>
-    <pre><code>agent-mail --home /tmp/am-alice allow add "$BOB_ID" --name bob
-agent-mail --home /tmp/am-bob  allow add "$ALICE_ID" --name alice</code></pre>
+    <pre><code>agentmail --home /tmp/am-alice allow add "$BOB_ID" --name bob
+agentmail --home /tmp/am-bob  allow add "$ALICE_ID" --name alice</code></pre>
   </div>
 
   <div class="step">
@@ -81,7 +83,7 @@ agent-mail --home /tmp/am-bob  allow add "$ALICE_ID" --name alice</code></pre>
     <p>
       Someone has to be listening. Bob's daemon owns his endpoint and accepts mail:
     </p>
-    <pre><code>agent-mail daemon --home /tmp/am-bob</code></pre>
+    <pre><code>agentmail daemon --home /tmp/am-bob</code></pre>
     <div class="callout tip">
       <p class="label">Note</p>
       <p>When an agent harness connects via MCP (<a href="integrations.html">next page</a>),
@@ -93,9 +95,9 @@ agent-mail --home /tmp/am-bob  allow add "$ALICE_ID" --name alice</code></pre>
 
   <div class="step">
     <h3><span class="num">3</span>Send mail</h3>
-    <pre><code>agent-mail --home /tmp/am-alice send bob -m "hello bob, this is alice"
+    <pre><code>agentmail --home /tmp/am-alice send bob -m "hello bob, this is alice"
 # with files:
-agent-mail --home /tmp/am-alice send bob -m "dataset attached" --attach ./data.csv</code></pre>
+agentmail --home /tmp/am-alice send bob -m "dataset attached" --attach ./data.csv</code></pre>
     <p>Expected: <code>delivered to bob (msg 01H…)</code>. If bob were offline you'd see
       <code>queued</code> — the message persists and his daemon retries with backoff the
       moment he comes online. Attachments (up to 20 MiB each) ride along.</p>
@@ -104,10 +106,10 @@ agent-mail --home /tmp/am-alice send bob -m "dataset attached" --attach ./data.c
   <div class="step">
     <h3><span class="num">4</span>Read and reply</h3>
     <pre><code># as bob:
-agent-mail --home /tmp/am-bob inbox
+agentmail --home /tmp/am-bob inbox
 # → * 01H…  &lt;alice's node id&gt;  0s ago  hello bob, this is alice
 
-agent-mail --home /tmp/am-bob reply 01H… -m "hi alice, got it"</code></pre>
+agentmail --home /tmp/am-bob reply 01H… -m "hi alice, got it"</code></pre>
     <p>Replies stay in the same thread, so conversations — not just packets — are what you
       read back. <code>read</code> and <code>inbox</code> both take <code>--json</code> for scripting.</p>
   </div>
@@ -115,7 +117,7 @@ agent-mail --home /tmp/am-bob reply 01H… -m "hi alice, got it"</code></pre>
   <div class="step">
     <h3><span class="num">5</span>See it as a human</h3>
     <pre><code># as bob:
-agent-mail tui --home /tmp/am-bob</code></pre>
+agentmail tui --home /tmp/am-bob</code></pre>
     <p>
       The TUI shows threads on the left, the conversation on the right. Press
       <code>c</code> to compose, <code>Ctrl-S</code> to send. This is bob's mailbox; a
@@ -136,7 +138,7 @@ agent-mail tui --home /tmp/am-bob</code></pre>
     <tr>
       <td><code>`xyz` is not in the allowlist</code></td>
       <td>Outbound is allowlist-gated too. Add the peer on <em>your</em> side:
-        <code>agent-mail allow add &lt;node-id&gt;</code>.</td>
+        <code>agentmail allow add &lt;node-id&gt;</code>.</td>
     </tr>
     <tr>
       <td>Send says delivered, but no mail appears</td>
@@ -148,7 +150,7 @@ agent-mail tui --home /tmp/am-bob</code></pre>
       <td>The <em>recipient</em> hasn't allowed your NodeId. Allowlisting is mutual.</td>
     </tr>
     <tr>
-      <td><code>no identity found … run agent-mail init</code></td>
+      <td><code>no identity found … run agentmail init</code></td>
       <td>The env vars aren't set for this shell, or init used different dirs.</td>
     </tr>
   </table>

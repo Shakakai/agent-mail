@@ -28,16 +28,16 @@
 <main>
   <h1 class="page">Agent harness integrations</h1>
   <p class="subtitle">
-    agent-mail's agent interface is a stdio MCP server: <code>agent-mail mcp</code>.
+    agent-mail's agent interface is a stdio MCP server: <code>agentmail mcp</code>.
     Any harness that speaks MCP can attach it — and the daemon comes embedded, so an
     agent's endpoint is online exactly while it is connected. Below: concrete setup for
     three harnesses, then the concepts your agent needs in its instructions.
   </p>
 
   <h2 id="prerequisite">Prerequisite: identity + allowlist</h2>
-  <pre><code>agent-mail init                          # once per installation
-agent-mail id                            # share this NodeId with peers
-agent-mail allow add &lt;peer-node-id&gt; --name teammate \
+  <pre><code>agentmail init                          # once per installation
+agentmail id                            # share this NodeId with peers
+agentmail allow add &lt;peer-node-id&gt; --name teammate \
     --description "who they are, when to involve them"   # inbound + outbound gate</code></pre>
   <p>Both sides must allow each other — before any mail flows, exchange NodeIds
     (they are public keys; safe to post in a ticket or chat).</p>
@@ -46,12 +46,12 @@ agent-mail allow add &lt;peer-node-id&gt; --name teammate \
   <p>Register the server at user level (works in every project and terminal):</p>
   <pre><code>pi mcp add agent-mail \
   --description "Peer-to-peer mail over IROH: send/receive messages with other agents, manage identity and allowlist" \
-  -- /usr/local/bin/agent-mail mcp</code></pre>
+  -- /usr/local/bin/agentmail mcp</code></pre>
   <p>Or as JSON in <code>~/.pi/agent/mcp.json</code>:</p>
   <pre><code>{
   "mcpServers": {
     "agent-mail": {
-      "command": "/usr/local/bin/agent-mail",
+      "command": "/usr/local/bin/agentmail",
       "args": ["mcp"],
       "description": "Peer-to-peer mail over IROH: send/receive messages with other agents"
     }
@@ -67,7 +67,7 @@ agent-mail allow add &lt;peer-node-id&gt; --name teammate \
   <pre><code>{
   "mcpServers": {
     "agent-mail": {
-      "command": "/usr/local/bin/agent-mail",
+      "command": "/usr/local/bin/agentmail",
       "args": ["mcp"],
       "env": {
         "AGENT_MAIL_CONFIG_DIR": "${PROJECT_ROOT}/.agent-mail/cfg",
@@ -106,7 +106,7 @@ cp /path/to/agent-mail/.pi/skills/agent-mail/SKILL.md .pi/skills/agent-mail/
     <code>.codex/config.toml</code>:</p>
   <pre><code># ~/.codex/config.toml
 [mcp_servers.agent-mail]
-command = "/usr/local/bin/agent-mail"
+command = "/usr/local/bin/agentmail"
 args = ["mcp"]
 
 # per-project identity variant:
@@ -124,13 +124,13 @@ AGENT_MAIL_DATA_DIR = "/path/to/project/.agent-mail/data"</code></pre>
   <p>Claude Code registers stdio servers with <code>claude mcp add</code> (user scope
     <code>-u</code>, project scope in the repo's <code>.mcp.json</code>):</p>
   <pre><code># user-wide
-claude mcp add --scope user agent-mail -- /usr/local/bin/agent-mail mcp
+claude mcp add --scope user agent-mail -- /usr/local/bin/agentmail mcp
 
 # or project .mcp.json (commit it so every teammate's agent gets the same mailbox)
 {
   "mcpServers": {
     "agent-mail": {
-      "command": "/usr/local/bin/agent-mail",
+      "command": "/usr/local/bin/agentmail",
       "args": ["mcp"]
     }
   }
@@ -148,7 +148,7 @@ claude mcp add --scope user agent-mail -- /usr/local/bin/agent-mail mcp
   <h3>Identity is the address</h3>
   <p><code>get_identity</code> returns the NodeId and allowlist location. The NodeId is the
     only address — names in the allowlist are local aliases. An agent shares its NodeId
-    when it wants mail; it asks a human to run <code>agent-mail allow add</code> for inbound
+    when it wants mail; it asks a human to run <code>agentmail allow add</code> for inbound
     peers, and it cannot (by default) change trust itself.</p>
 
   <h3>Delivery semantics: delivered vs queued vs failed</h3>
@@ -167,8 +167,8 @@ claude mcp add --scope user agent-mail -- /usr/local/bin/agent-mail mcp
 
   <h3>Humans have their own mailbox</h3>
   <p>There is no shared human/agent inbox. A person who wants mail runs their own node —
-    <code>agent-mail init --home ~/mail</code>, allow the agent's NodeId (and vice versa),
-    then <code>agent-mail tui --home ~/mail</code>. To the agent, that person is simply a
+    <code>agentmail init --home ~/mail</code>, allow the agent's NodeId (and vice versa),
+    then <code>agentmail tui --home ~/mail</code>. To the agent, that person is simply a
     peer: <code>send_message(peer: "&lt;their-node-id&gt;")</code>. This keeps each
     mailbox single-reader, which is what makes trust, unread state, and delivery
     semantics trivially correct.</p>

@@ -181,7 +181,7 @@ fn cmd_init(paths: &Paths) -> Result<()> {
     println!("  database:    {}", paths.db.display());
     println!("  node id:     {id}");
     println!();
-    println!("run it:   agent-mail daemon --home {}", paths.config_dir.display());
+    println!("run it:   agentmail daemon --home {}", paths.config_dir.display());
     println!("share this node id with peers; they must allow it (and you theirs).");
     Ok(())
 }

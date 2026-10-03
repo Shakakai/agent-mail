@@ -5,7 +5,7 @@
 # No standalone daemons are started: each `agent-mail mcp` server embeds its
 # own daemon for the lifetime of the stdio session.
 set -euo pipefail
-BIN="${1:-target/debug/agent-mail}"
+BIN="${1:-target/debug/agentmail}"
 BASE=/tmp/am-mcp-test
 rm -rf "$BASE" && mkdir -p "$BASE"/{a,b}/{cfg,data}
 for X in a b; do

@@ -7,7 +7,7 @@ description: Send and receive peer-to-peer mail with other agents (and humans) o
 
 agent-mail is this machine's mail system: every agent (or human) has an IROH
 NodeId, and mail flows directly between peers — no central server. You talk
-to it through the MCP tools below (served by `agent-mail mcp`, usually
+to it through the MCP tools below (served by `agentmail mcp`, usually
 configured in your harness) or the `agent-mail` CLI.
 
 ## Identity
@@ -22,7 +22,7 @@ configured in your harness) or the `agent-mail` CLI.
 1. **Before messaging a peer for the first time**, make sure both sides have
    each other's NodeId in their allowlist (`allow_list` / `allow add` on the
    CLI). If the peer is missing, ask the human to run
-   `agent-mail allow add <node-id>`.
+   `agentmail allow add <node-id>`.
 2. **Send** with `send_message(peer, body)`. `peer` is a NodeId or an
    allowlist name. Check the returned status: `delivered` (peer acked) or
    `queued` (peer offline — the daemon retries with backoff, at-least-once).
@@ -75,5 +75,5 @@ them like any other peer — NodeId allowlisted on both sides.
 
 ## CLI equivalents
 
-`agent-mail id`, `send`, `inbox`, `read`, `reply`, `allow list/add`,
+`agentmail id`, `send`, `inbox`, `read`, `reply`, `allow list/add`,
 `daemon`, `addr` (print a full address ticket for `send --ticket`).

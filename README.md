@@ -89,7 +89,7 @@ The transport pieces we use directly:
   └─────────┘                             └─────────┘
 ```
 
-Each installation runs a **daemon** (the `agent-mail daemon` command or a
+Each installation runs a **daemon** (the `agentmail daemon` command or a
 background service) that owns the IROH endpoint, receives mail, retries the
 outbox, and exposes everything else through a local SQLite store. Agents and
 humans interact with it through the CLI or the MCP server — they never touch
@@ -108,9 +108,9 @@ store:
 # install the latest production build (platform-detecting, checksum-verified):
 curl -fsSL https://shakakai.github.io/agent-mail/install.sh | bash
 
-agent-mail init --home ./alice        # create a new private key + folder
-agent-mail daemon --home ./alice      # run it (same flag reattaches later)
-agent-mail init --home ./bob && agent-mail daemon --home ./bob   # a second node
+agentmail init --home ./alice        # create a new private key + folder
+agentmail daemon --home ./alice      # run it (same flag reattaches later)
+agentmail init --home ./bob && agentmail daemon --home ./bob   # a second node
 ```
 
 Without `--home`, paths follow the XDG convention and can be relocated with
@@ -153,7 +153,7 @@ keys listed here:
 # Every entry is an agent (or human client) this agent may exchange mail with.
 
 [[peer]]
-node_id = "q7f3…zbase32…"   # IROH NodeId (z-base-32, as shown by `agent-mail id`)
+node_id = "q7f3…zbase32…"   # IROH NodeId (z-base-32, as shown by `agentmail id`)
 name = "research-agent"      # Free-form label, shown in `inbox` etc.
 human = false                # `true` = messages may be surfaced to a human UI
 
@@ -298,7 +298,7 @@ persistent **outbox + retry**:
 3. On connection failure, the daemon retries with exponential backoff +
    jitter (30s → 15min cap). Messages survive daemon restarts.
 4. After 10 failed attempts the message is marked `failed` — it leaves the
-   retry loop but stays visible: `agent-mail outbox`, the TUI status bar
+   retry loop but stays visible: `agentmail outbox`, the TUI status bar
    (`outbox:N (M failed)`), and the MCP `list_outbox` tool all surface it,
    so exhaustion is never silent.
 4. `send --deadline <when>` can fail fast instead, for interactive use.
@@ -314,21 +314,21 @@ path — it adds real trust/flood complexity — but the ALPN is reserved:
 ## CLI design
 
 ```
-agent-mail id                      # print my NodeId (to hand to a peer)
-agent-mail init                    # generate identity, config, empty allowlist
-agent-mail allow add <node-id> [-n name] [-d "context for agents"]
-agent-mail allow list | remove
+agentmail id                      # print my NodeId (to hand to a peer)
+agentmail init                    # generate identity, config, empty allowlist
+agentmail allow add <node-id> [-n name] [-d "context for agents"]
+agentmail allow list | remove
 
-agent-mail send <node-id-or-name> [-s subject-ish] [-m body] [--stdin]
-agent-mail inbox [--peer name] [--json]
-agent-mail read <msg-id> [--json]
-agent-mail reply <msg-id> [-m body] [--stdin]
+agentmail send <node-id-or-name> [-s subject-ish] [-m body] [--stdin]
+agentmail inbox [--peer name] [--json]
+agentmail read <msg-id> [--json]
+agentmail reply <msg-id> [-m body] [--stdin]
 
-agent-mail daemon                  # run the mail daemon (foreground)
-agent-mail mcp                     # serve MCP over stdio (for agents)
-agent-mail tui                     # human mail client
-agent-mail tui                     # human mail client (M5)
-agent-mail addr [--json]           # print my full address ticket (for --ticket)
+agentmail daemon                  # run the mail daemon (foreground)
+agentmail mcp                     # serve MCP over stdio (for agents)
+agentmail tui                     # human mail client
+agentmail tui                     # human mail client (M5)
+agentmail addr [--json]           # print my full address ticket (for --ticket)
 agent-mail debug dump <frame...>   # decode raw frames (planned)
 ```
 
@@ -337,7 +337,7 @@ agents; the CLI and TUI are for humans and for scripting.
 
 ## TUI
 
-`agent-mail tui` (or `agent-mail` with no subcommand when attached to a
+`agentmail tui` (or `agent-mail` with no subcommand when attached to a
 TTY) launches the human mail client:
 
 - **Three-pane layout**: thread list → conversation view → compose — in the
@@ -358,7 +358,7 @@ as the CLI and MCP server.
 
 ## MCP server
 
-`agent-mail mcp` serves a stdio MCP server exposing:
+`agentmail mcp` serves a stdio MCP server exposing:
 
 | Tool | Purpose |
 |---|---|
@@ -379,7 +379,7 @@ The MCP server **embeds the daemon**: it starts in-process when the server
 starts and shuts down automatically when the stdio session ends. An agent's
 mail endpoint is therefore online exactly while its agent harness is
 connected — no separately managed daemon process is needed (a standalone
-`agent-mail daemon` remains available for always-on mail).
+`agentmail daemon` remains available for always-on mail).
 
 ## Agent skills
 
@@ -429,7 +429,7 @@ Key dependencies: `iroh`, `clap`, `serde`/`serde_json`, `toml`, `rusqlite`,
 3. **M3 — mail**: ✅ done. Envelope types, send/ack/error, SQLite
    inbox/outbox, retry loop, full `send`/`inbox`/`read`/`reply` CLI,
    `addr`/`--ticket` for explicit dialing.
-4. **M4 — MCP + skills**: ✅ done. `agent-mail mcp` (rmcp 3, stdio) exposes
+4. **M4 — MCP + skills**: ✅ done. `agentmail mcp` (rmcp 3, stdio) exposes
    `get_identity`, `send_message`, `list_inbox`, `read_message`, `reply`,
    `list_threads`, `allow_list`, and a config-gated `allow_add`
    (`mcp_allow_trust_changes`, default off). **Subscriptions** (new mail
@@ -444,7 +444,7 @@ Key dependencies: `iroh`, `clap`, `serde`/`serde_json`, `toml`, `rusqlite`,
    inbound rows and fans out. Shared ops live in `ops.rs`; skill ships at
    `.pi/skills/agent-mail/SKILL.md`; `scripts/mcp_smoke.py` drives a
    two-agent JSON-RPC conversation plus both subscription paths end to end.
-5. **M5 — TUI**: ✅ done. `agent-mail tui`: three-pane keyboard-driven
+5. **M5 — TUI**: ✅ done. `agentmail tui`: three-pane keyboard-driven
    client (thread list, conversation with me/peer color coding, status
    bar), compose/reply modal (Tab fields, Ctrl-S send), allowlist editor
    showing rejected inbound attempts (daemon records them), raw JSON view,

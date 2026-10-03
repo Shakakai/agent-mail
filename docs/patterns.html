@@ -47,7 +47,7 @@
         <button type="button" class="term-replay">&#8635; replay</button>
       </div>
       <pre class="term-body" aria-live="polite"></pre>
-      <script type="application/json" class="demo-script">[{"t": "scene", "s": "\u00b7 \u00b7 \u00b7 your laptop \u2014 the manager agent \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agent-mail --home ~/mail-manager send research \\\n  -m \"Survey A2A messaging protocols; attach the comparison.\" \\\n  --attach brief.md"}, {"t": "packet", "to": "f672\u20261c55 \u00b7 QUIC, direct path"}, {"t": "out", "s": "delivered to f672\u20261c55 (msg 01H4X9T\u2026)"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 the research VM (a different machine, a different network) \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agent-mail --home ~/mail-research inbox"}, {"t": "out", "s": "* 01H4X9T  7a3f\u2026b291  1s ago  Survey A2A messaging protocols\u2026"}, {"t": "cmd", "s": "agent-mail --home ~/mail-research reply 01H4X9T \\\n  -m \"Done \u2014 6 protocols compared. agent-mail/3 is the simplest.\" \\\n  --attach comparison.csv"}, {"t": "packet", "to": "7a3f\u2026b291 \u00b7 QUIC, relay fallback"}, {"t": "out", "s": "delivered to 7a3f\u2026b291 (msg 01H4Y2K\u2026)"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 back on your laptop \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agent-mail --home ~/mail-manager read 01H4Y2K"}, {"t": "out", "s": "from:   f672\u20261c55\nattach: comparison.csv (14.2 KiB, text/csv)\nbody:   Done \u2014 6 protocols compared. agent-mail/3 is the simplest."}, {"t": "wire", "s": "\u2014 the wire, for the curious \u2014\n{\"v\":3,\"type\":\"send\",\"msg\":{\"id\":\"01H4Y2K\u2026\",\n \"from\":\"f672\u20261c55\",\"to\":\"7a3f\u2026b291\",\"thread_id\":\"01H4X9T\u2026\",\n \"in_reply_to\":\"01H4X9T\u2026\",\"attachments\":[{\"name\":\"comparison.csv\",\"size\":14539}]}}"}]</script>
+      <script type="application/json" class="demo-script">[{"t": "scene", "s": "\u00b7 \u00b7 \u00b7 your laptop \u2014 the manager agent \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agentmail --home ~/mail-manager send research \\\n  -m \"Survey A2A messaging protocols; attach the comparison.\" \\\n  --attach brief.md"}, {"t": "packet", "to": "f672\u20261c55 \u00b7 QUIC, direct path"}, {"t": "out", "s": "delivered to f672\u20261c55 (msg 01H4X9T\u2026)"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 the research VM (a different machine, a different network) \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agentmail --home ~/mail-research inbox"}, {"t": "out", "s": "* 01H4X9T  7a3f\u2026b291  1s ago  Survey A2A messaging protocols\u2026"}, {"t": "cmd", "s": "agentmail --home ~/mail-research reply 01H4X9T \\\n  -m \"Done \u2014 6 protocols compared. agent-mail/3 is the simplest.\" \\\n  --attach comparison.csv"}, {"t": "packet", "to": "7a3f\u2026b291 \u00b7 QUIC, relay fallback"}, {"t": "out", "s": "delivered to 7a3f\u2026b291 (msg 01H4Y2K\u2026)"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 back on your laptop \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agentmail --home ~/mail-manager read 01H4Y2K"}, {"t": "out", "s": "from:   f672\u20261c55\nattach: comparison.csv (14.2 KiB, text/csv)\nbody:   Done \u2014 6 protocols compared. agent-mail/3 is the simplest."}, {"t": "wire", "s": "\u2014 the wire, for the curious \u2014\n{\"v\":3,\"type\":\"send\",\"msg\":{\"id\":\"01H4Y2K\u2026\",\n \"from\":\"f672\u20261c55\",\"to\":\"7a3f\u2026b291\",\"thread_id\":\"01H4X9T\u2026\",\n \"in_reply_to\":\"01H4X9T\u2026\",\"attachments\":[{\"name\":\"comparison.csv\",\"size\":14539}]}}"}]</script>
     </div>
   <p class="demo-caption">
     A manager on your laptop tasks a research agent on a cloud VM. The reply returns on
@@ -62,7 +62,7 @@
         <button type="button" class="term-replay">&#8635; replay</button>
       </div>
       <pre class="term-body" aria-live="polite"></pre>
-      <script type="application/json" class="demo-script">[{"t": "scene", "s": "\u00b7 \u00b7 \u00b7 you, from your own mailbox \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agent-mail --home ~/mail-human send pi \\\n  -m \"Where are we on the migration?\""}, {"t": "packet", "to": "7a3f\u2026b291 \u00b7 your Pi agent"}, {"t": "out", "s": "delivered to 7a3f\u2026b291 (msg 01H5B1M\u2026)"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 your Pi agent, idle \u2014 standing instruction: check the mail \u00b7 \u00b7 \u00b7"}, {"t": "agent", "s": "list_inbox(unread_only: true)"}, {"t": "out", "s": "\u2192 1 unread \u2014 from c0ff\u2026ee42 (human): \"Where are we on the migration?\""}, {"t": "agent", "s": "read_message(\"01H5B1M\u2026\")"}, {"t": "out", "s": "\u00b7 marked read"}, {"t": "agent", "s": "reply(\"01H5B1M\u2026\", \"3 of 5 workers done. ETA tomorrow 9am.\")"}, {"t": "packet", "to": "c0ff\u2026ee42 \u00b7 back to you"}, {"t": "out", "s": "{\"status\": \"delivered\", \"msg_key\": \"01H5B3Q\u2026\"}"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 you again \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agent-mail --home ~/mail-human inbox"}, {"t": "out", "s": "* 01H5B3Q  7a3f\u2026b291  just now  3 of 5 workers done. ETA tomorrow 9am."}, {"t": "wire", "s": "\u2014 one protocol, two readers: the same thread in your TUI\n  and in your agent's tools. no shared accounts, no special cases."}]</script>
+      <script type="application/json" class="demo-script">[{"t": "scene", "s": "\u00b7 \u00b7 \u00b7 you, from your own mailbox \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agentmail --home ~/mail-human send pi \\\n  -m \"Where are we on the migration?\""}, {"t": "packet", "to": "7a3f\u2026b291 \u00b7 your Pi agent"}, {"t": "out", "s": "delivered to 7a3f\u2026b291 (msg 01H5B1M\u2026)"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 your Pi agent, idle \u2014 standing instruction: check the mail \u00b7 \u00b7 \u00b7"}, {"t": "agent", "s": "list_inbox(unread_only: true)"}, {"t": "out", "s": "\u2192 1 unread \u2014 from c0ff\u2026ee42 (human): \"Where are we on the migration?\""}, {"t": "agent", "s": "read_message(\"01H5B1M\u2026\")"}, {"t": "out", "s": "\u00b7 marked read"}, {"t": "agent", "s": "reply(\"01H5B1M\u2026\", \"3 of 5 workers done. ETA tomorrow 9am.\")"}, {"t": "packet", "to": "c0ff\u2026ee42 \u00b7 back to you"}, {"t": "out", "s": "{\"status\": \"delivered\", \"msg_key\": \"01H5B3Q\u2026\"}"}, {"t": "scene", "s": "\u00b7 \u00b7 \u00b7 you again \u00b7 \u00b7 \u00b7"}, {"t": "cmd", "s": "agentmail --home ~/mail-human inbox"}, {"t": "out", "s": "* 01H5B3Q  7a3f\u2026b291  just now  3 of 5 workers done. ETA tomorrow 9am."}, {"t": "wire", "s": "\u2014 one protocol, two readers: the same thread in your TUI\n  and in your agent's tools. no shared accounts, no special cases."}]</script>
     </div>
   <p class="demo-caption">
     You mail your Pi agent from your own mailbox; its standing instruction is to check
@@ -96,13 +96,13 @@
   </figure>
   <p>Set it up in three moves:</p>
   <pre><code># 1. Give the manager its mailbox (a home folder, its own identity):
-agent-mail init --home ~/mail-manager
+agentmail init --home ~/mail-manager
 #    ...and register it with your harness (see the Harnesses page).
 
 # 2. Give each sub-agent its node and allow the manager both ways:
-agent-mail init --home /srv/agents/scout
-agent-mail --home /srv/agents/scout allow add &lt;manager-node-id&gt; --name manager
-agent-mail --home ~/mail-manager allow add &lt;scout-node-id&gt; --name scout
+agentmail init --home /srv/agents/scout
+agentmail --home /srv/agents/scout allow add &lt;manager-node-id&gt; --name manager
+agentmail --home ~/mail-manager allow add &lt;scout-node-id&gt; --name scout
 
 # 3. Tell the manager how to run the relationship (paste into its instructions):
 
@@ -169,7 +169,7 @@ agent-mail --home ~/mail-manager allow add &lt;scout-node-id&gt; --name scout
 
   <h3>Cron agents</h3>
   <p>
-    An agent that only exists on a schedule — <code>agent-mail daemon</code> under cron or
+    An agent that only exists on a schedule — <code>agentmail daemon</code> under cron or
     systemd timers — wakes, reads its mailbox, finds (or doesn't find) instructions, acts,
     reports, sleeps. Off-line agents cost nothing and miss nothing: mail queues at the
     sender until they exist again.

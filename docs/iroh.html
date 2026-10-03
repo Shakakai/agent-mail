@@ -89,9 +89,9 @@
     <li><strong>Tickets (bypass discovery entirely).</strong> Exchange an address out of
       band and dial it directly:
       <pre><code># recipient:
-agent-mail addr &gt; ticket.json
+agentmail addr &gt; ticket.json
 # sender:
-agent-mail send bob --ticket "$(cat ticket.json)" -m "…"</code></pre>
+agentmail send bob --ticket "$(cat ticket.json)" -m "…"</code></pre>
       Ideal for LANs, VPCs, and anywhere you control both ends.</li>
     <li><strong>Self-host relays (and discovery).</strong> Run your own relay and point
       the node at it — two lines in <code>config.toml</code>:

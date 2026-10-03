@@ -127,7 +127,7 @@ class McpClient:
 
 
 def main():
-    binary = sys.argv[1] if len(sys.argv) > 1 else "target/debug/agent-mail"
+    binary = sys.argv[1] if len(sys.argv) > 1 else "target/debug/agentmail"
     base = "/tmp/am-mcp-test"
 
     a = McpClient(binary, f"{base}/a/cfg", f"{base}/a/data")

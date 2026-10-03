@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# agent-mail installer
+# agentmail installer
 #
 # Downloads the latest production build for your platform from GitHub
 # Releases, verifies its SHA-256 checksum against the release's SHA256SUMS,
@@ -22,8 +22,8 @@ API="https://api.github.com/repos/${REPO}"
 DEFAULT_PREFIX="${HOME}/.local/bin"
 PREFIX="${INSTALL_PREFIX:-$DEFAULT_PREFIX}"
 
-say()  { printf 'agent-mail install: %s\n' "$*"; }
-fail() { printf 'agent-mail install: error: %s\n' "$*" >&2; exit 1; }
+say()  { printf 'agentmail install: %s\n' "$*"; }
+fail() { printf 'agentmail install: error: %s\n' "$*" >&2; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1 || fail "required tool not found: $1 (install it and retry)"; }
 need curl
@@ -100,7 +100,7 @@ say "checksum OK"
 # ---------------------------------------------------------------- install
 [ -w "$PREFIX" ] 2>/dev/null || mkdir -p "$PREFIX" 2>/dev/null \
   || fail "cannot write to ${PREFIX} — set INSTALL_PREFIX to a writable directory"
-DEST="${PREFIX}/agent-mail"
+DEST="${PREFIX}/agentmail"
 mv "$ASSET" "$DEST"
 chmod 0755 "$DEST"
 
@@ -131,4 +131,14 @@ case ":${PATH}:" in
 esac
 
 say "installed agent-mail ${VERSION} to ${DEST}"
-say "next: agent-mail init --home ~/mail   # create your first node"
+# ---- am alias (never clobber an existing tool) ----
+if command -v am >/dev/null 2>&1; then
+  say "alias skipped: 'am' is already provided by $(command -v am)"
+elif [ -e "${PREFIX}/am" ] || [ -L "${PREFIX}/am" ]; then
+  say "alias skipped: ${PREFIX}/am already exists"
+else
+  ln -s agentmail "${PREFIX}/am"
+  say "installed alias: am -> agentmail"
+fi
+
+say "next: agentmail init --home ~/mail   # create your first node"

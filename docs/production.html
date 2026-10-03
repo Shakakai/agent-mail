@@ -38,13 +38,13 @@
     <tr><th>Mode</th><th>When</th><th>Trade-off</th></tr>
     <tr>
       <td><strong>Embedded</strong> (automatic)</td>
-      <td>Agent-facing installs: the MCP server (<code>agent-mail mcp</code>) spawns the
+      <td>Agent-facing installs: the MCP server (<code>agentmail mcp</code>) spawns the
         daemon in-process for the life of the stdio session.</td>
       <td>Zero ops; the endpoint is online exactly while an agent is connected. Mail to an
         offline install queues at the sender.</td>
     </tr>
     <tr>
-      <td><strong>Standalone</strong> (<code>agent-mail daemon</code>)</td>
+      <td><strong>Standalone</strong> (<code>agentmail daemon</code>)</td>
       <td>Always-on mail: shared team inboxes, service agents, cron-driven agents,
         human-primary installs using the TUI.</td>
       <td>Needs process supervision (launchd/systemd below). Don't run both modes on one
@@ -61,7 +61,7 @@
   &lt;key&gt;Label&lt;/key&gt;            &lt;string&gt;com.agent-mail.daemon&lt;/string&gt;
   &lt;key&gt;ProgramArguments&lt;/key&gt;
   &lt;array&gt;
-    &lt;string&gt;/usr/local/bin/agent-mail&lt;/string&gt;
+    &lt;string&gt;/usr/local/bin/agentmail&lt;/string&gt;
     &lt;string&gt;daemon&lt;/string&gt;
   &lt;/array&gt;
   &lt;key&gt;EnvironmentVariables&lt;/key&gt;
@@ -80,12 +80,12 @@ launchctl load ~/Library/LaunchAgents/com.agent-mail.daemon.plist</code></pre>
   <h2 id="systemd">Always-on daemon: systemd (Linux)</h2>
   <pre><code>sudo tee /etc/systemd/system/agent-mail.service &gt;/dev/null &lt;&lt;'EOF'
 [Unit]
-Description=agent-mail daemon (peer-to-peer mail for agents)
+Description=agentmail daemon (peer-to-peer mail for agents)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/agent-mail daemon
+ExecStart=/usr/local/bin/agentmail daemon
 Restart=always
 RestartSec=5
 Environment=RUST_LOG=agent_mail=info
@@ -103,9 +103,9 @@ sudo systemctl enable --now agent-mail</code></pre>
   <h2 id="layout">Filesystem layout: one folder per node</h2>
   <p>The simplest production layout is one self-contained folder per node, selected with
     the global <code>--home</code> flag (or <code>AGENT_MAIL_HOME</code>):</p>
-  <pre><code>agent-mail init --home /var/lib/agent-mail/researcher
-agent-mail daemon --home /var/lib/agent-mail/researcher
-agent-mail tui      --home ~/mail          # a human's own mailbox, same mechanism</code></pre>
+  <pre><code>agentmail init --home /var/lib/agent-mail/researcher
+agentmail daemon --home /var/lib/agent-mail/researcher
+agentmail tui      --home ~/mail          # a human's own mailbox, same mechanism</code></pre>
   <p>Each home holds <code>secret-key</code> (0600), <code>allowed-keys.toml</code> (0600),
     <code>config.toml</code>, and <code>mail.db</code> — everything that node needs. Back up
     the folder, move it to another machine, or point a fresh binary at it: the node is the
@@ -158,7 +158,7 @@ max_message_bytes = 1048576        # 1 MiB
 
 # Outbox retry backoff: first retry after retry_base_secs, doubling per
 # attempt, capped at retry_max_secs. 10 attempts, then status = "failed"
-# (surfaced via `agent-mail outbox`, the TUI, and the MCP list_outbox tool).
+# (surfaced via `agentmail outbox`, the TUI, and the MCP list_outbox tool).
 retry_base_secs = 30
 retry_max_secs  = 900              # 15 min
 
@@ -207,7 +207,7 @@ mcp_allow_trust_changes = false</code></pre>
     <li><strong>MCP trust changes</strong> — <code>mcp_allow_trust_changes = false</code>
       (default). Adding a NodeId is a human decision; keep it that way.</li>
     <li><strong>Allowlist hygiene</strong> — remove stale peers:
-      <code>agent-mail allow remove &lt;name-or-id&gt;</code>. Inbound attempts from unknown
+      <code>agentmail allow remove &lt;name-or-id&gt;</code>. Inbound attempts from unknown
       keys are dropped before any envelope is read and logged to the rejections table
       (visible in the TUI allowlist view).</li>
     <li><strong>Mail is plaintext at rest.</strong> The transport is end-to-end encrypted,
@@ -225,7 +225,7 @@ mcp_allow_trust_changes = false</code></pre>
     <tr><th>Signal</th><th>Where</th><th>Healthy</th></tr>
     <tr>
       <td>Outbox backlog</td>
-      <td><code>agent-mail outbox</code> · TUI status bar · MCP <code>list_outbox</code></td>
+      <td><code>agentmail outbox</code> · TUI status bar · MCP <code>list_outbox</code></td>
       <td><code>0 pending, 0 failed</code>. A growing pending count means peers are offline
         or discovery is failing. Any <code>failed</code> &gt; 0 deserves investigation —
         those messages will never send themselves.</td>
@@ -244,7 +244,7 @@ mcp_allow_trust_changes = false</code></pre>
     </tr>
     <tr>
       <td>Identity</td>
-      <td><code>agent-mail id</code></td>
+      <td><code>agentmail id</code></td>
       <td>Stable across restarts (the secret key persists). Rotate by generating a new
         identity and re-allowlisting — there is no PKI to notify.</td>
     </tr>
@@ -266,7 +266,7 @@ mcp_allow_trust_changes = false</code></pre>
 sudo systemctl enable --now agent-mail@researcher
 sudo systemctl enable --now agent-mail@reviewer
 # with per-unit Environment=AGENT_MAIL_HOME=/var/lib/agent-mail/%i
-# and ExecStart=/usr/local/bin/agent-mail daemon --home /var/lib/agent-mail/%i</code></pre>
+# and ExecStart=/usr/local/bin/agentmail daemon --home /var/lib/agent-mail/%i</code></pre>
   <p>For agent fleets, generate identities at provisioning time, exchange NodeIds through
     your normal secret channel (they are public keys — safe to pass through ticketing
     systems), and commit allowlists to config management.</p>

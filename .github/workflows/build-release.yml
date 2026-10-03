@@ -46,7 +46,7 @@ jobs:
           mkdir -p dist
           EXT=""
           [[ "${{ matrix.os }}" == "windows-latest" ]] && EXT=".exe"
-          cp "target/release/agent-mail$EXT" "dist/agent-mail-${VERSION}-${TARGET}$EXT"
+          cp "target/release/agentmail$EXT" "dist/agentmail-${VERSION}-${TARGET}$EXT"
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.os }}

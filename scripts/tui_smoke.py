@@ -62,7 +62,7 @@ def send_keys(fd, s: str):
 
 
 def main():
-    binary = sys.argv[1] if len(sys.argv) > 1 else "target/debug/agent-mail"
+    binary = sys.argv[1] if len(sys.argv) > 1 else "target/debug/agentmail"
     base = "/tmp/am-tui-test"
 
     pid, fd = drive(binary, f"{base}/b/cfg", f"{base}/b/data")
